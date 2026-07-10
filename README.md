@@ -10,7 +10,7 @@ That curve can be started in three ways:
 
 - Grid follows the host transport. Pick a division from one bar to a sixteenth note, with triplet options included.
 - Sidechain starts the curve when the sidechain signal crosses the threshold.
-- Grid and Sidechain follows the grid but lets sidechain hits take over when they call for a deeper duck.
+- Grid and Sidechain follows the grid but lets sidechain hits take over when the sidechain input crosses the threshold.
 
 The Speed control changes the rate at which the curve is read. Ramp Down and Ramp Shape let you shape the movement immediately before the first point. Pre-duck adds up to 10 ms of look-ahead to the main signal, so the duck can begin just ahead of a detected hit.
 
@@ -48,20 +48,14 @@ Every curve point is individually focusable and exposed to supported screen read
 
 ## Build from source
 
-Clone with the JUCE submodule in one step:
+Clone the repository:
 
 ```sh
-git clone --recurse-submodules <repository-url>
+git clone <repository-url>
 cd bp-trigger
 ```
 
-If you already cloned the repository without submodules, initialise JUCE before building:
-
-```sh
-git submodule update --init --recursive
-```
-
-With CMake 3.22 or newer installed, build the plug-in:
+On the first configure, CMake downloads the pinned JUCE source snapshot automatically. An internet connection is required for that first step. With CMake 3.22 or newer installed, build the plug-in:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release

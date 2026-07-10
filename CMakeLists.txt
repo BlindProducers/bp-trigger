@@ -5,14 +5,12 @@ project(BPTrigger VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/JUCE")
+include(FetchContent)
 
-if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "JUCE submodule not found. Run: git submodule update --init --recursive")
-endif()
-
-add_subdirectory("${JUCE_DIR}" JUCE)
+FetchContent_Declare(juce
+    URL https://github.com/juce-framework/JUCE/archive/2cdfca8feb300fb424002ba2c2751569e5bacb64.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(juce)
 
 juce_add_plugin(BPTrigger
     COMPANY_NAME "Blind Producers"
