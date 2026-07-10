@@ -5,10 +5,11 @@ project(BPTrigger VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(NOT DEFINED JUCE_DIR OR NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
+set(JUCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/JUCE")
+
+if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
-        "JUCE_DIR must point to a JUCE checkout. "
-        "Configure with -DJUCE_DIR=/path/to/JUCE")
+        "JUCE submodule not found. Run: git submodule update --init --recursive")
 endif()
 
 add_subdirectory("${JUCE_DIR}" JUCE)
