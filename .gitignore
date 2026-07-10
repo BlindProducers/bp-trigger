@@ -1,0 +1,16 @@
+.DS_Store
+
+# CMake and JUCE build products
+/build/
+/build-*/
+/cmake-build-*/
+/BPTrigger_artefacts/
+
+# Plug-in bundles and installers
+*.component/
+*.vst3/
+*.app/
+*.pkg
+
+# User-created curve presets
+*.triggercurve

@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoiceOver Accessible Plugin UI Guide for JUCE</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --text: #181816;
+      --muted: #5b5b55;
+      --panel: #ffffff;
+      --border: #d8d8d0;
+      --accent: #235b8f;
+      --code-bg: #202124;
+      --code-text: #f4f4f4;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161716;
+        --text: #f2f2ec;
+        --muted: #c7c7bd;
+        --panel: #222321;
+        --border: #41423d;
+        --accent: #8bc5ff;
+        --code-bg: #101110;
+        --code-text: #f6f6f0;
+      }
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.58;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin-top: 1.8em;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 2rem;
+    }
+
+    h2 {
+      border-top: 1px solid var(--border);
+      padding-top: 1.2em;
+    }
+
+    p, li {
+      max-width: 78ch;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    .summary, .checklist {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.94em;
+      background: color-mix(in srgb, var(--border), transparent 45%);
+      padding: 0.1em 0.3em;
+      border-radius: 4px;
+    }
+
+    pre {
+      overflow-x: auto;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+      background: var(--panel);
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: color-mix(in srgb, var(--border), transparent 55%);
+    }
+
+    .note {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>VoiceOver Accessible Plugin UI Guide for JUCE</h1>
+
+  <section class="summary" aria-labelledby="purpose">
+    <h2 id="purpose">Purpose</h2>
+    <p>
+      This document captures the accessibility patterns used in the BP-Convolution plugin UI so they can be reused in other JUCE audio plugins. The goal is a plugin that works naturally with macOS VoiceOver: controls have names, values, roles, help text, predictable keyboard focus, useful groups, accessible lists/tables, and spoken feedback when important state changes.
+    </p>
+  </section>
+
+  <h2>Core Principles</h2>
+  <ul>
+    <li>Every interactive control must have a clear accessible title, description, and help text where useful.</li>
+    <li>Every major visual section should also be an accessibility group.</li>
+    <li>Keyboard focus must be intentional. Do not rely on the default tab order if the UI has sections, panels, browsers, or modal overlays.</li>
+    <li>Painted text is not enough. If a row, table cell, or custom control is only drawn with <code>Graphics::drawText</code>, VoiceOver will not know what it says unless you expose a name.</li>
+    <li>Actions that change context, load files, open panels, close panels, or navigate folders should post an accessibility announcement.</li>
+    <li>Keyboard shortcuts should work when focus is inside the control that visually owns the interaction, not only when the parent component has focus.</li>
+  </ul>
+
+  <h2>Accessibility Groups</h2>
+  <p>
+    Use groups for major plugin sections such as IR Controls, Filter Controls, Output Controls, Settings, and IR Browser. A group gives VoiceOver users a mental map of the plugin.
+  </p>
+
+  <h3>Component setup</h3>
+  <pre><code class="language-cpp">setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);</code></pre>
+
+  <h3>Group accessibility handler</h3>
+  <pre><code class="language-cpp">class IRBrowserAccessibilityHandler : public juce::AccessibilityHandler
+{
+public:
+    IRBrowserAccessibilityHandler(IRBrowser&amp; c)
+        : AccessibilityHandler(c, juce::AccessibilityRole::group) {}
+
+    juce::String getTitle() const override { return "IR Browser"; }
+};
+
+std::unique_ptr&lt;juce::AccessibilityHandler&gt; IRBrowser::createAccessibilityHandler()
+{
+    return std::make_unique&lt;IRBrowserAccessibilityHandler&gt;(*this);
+}</code></pre>
+
+  <h3>When to create a group</h3>
+  <ul>
+    <li>Create a group for each logical section of the plugin.</li>
+    <li>Create a group for overlay panels such as Settings.</li>
+    <li>Create a group for complex controls such as an IR browser, preset browser, modulation matrix, or routing table.</li>
+    <li>Avoid making every tiny row or label its own group. Too many groups make navigation noisy.</li>
+  </ul>
+
+  <h2>Labels, Titles, Descriptions, and Help Text</h2>
+  <p>
+    JUCE exposes several useful strings to accessibility clients. Use them consistently.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>Use it for</th>
+        <th>Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>setTitle()</code></td>
+        <td>The short accessible name of a control.</td>
+        <td><code>loadButton.setTitle("Load IR");</code></td>
+      </tr>
+      <tr>
+        <td><code>setDescription()</code></td>
+        <td>A slightly longer explanation of what the control changes or does.</td>
+        <td><code>setDescription("Load the selected WAV impulse response");</code></td>
+      </tr>
+      <tr>
+        <td><code>setHelpText()</code></td>
+        <td>Keyboard instructions or interaction hints.</td>
+        <td><code>setHelpText("Select a WAV file, then press Enter");</code></td>
+      </tr>
+      <tr>
+        <td><code>Label::attachToComponent()</code></td>
+        <td>Visual labels for sliders and controls.</td>
+        <td><code>startLabel.attachToComponent(&amp;startSlider, true);</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Button example</h3>
+  <pre><code class="language-cpp">loadButton.setButtonText("Load IR");
+loadButton.setWantsKeyboardFocus(true);
+loadButton.setTitle("Load IR");
+loadButton.setDescription("Load the selected WAV impulse response");
+loadButton.setHelpText("Select a WAV file in the browser, then press Enter on this button");
+loadButton.onClick = [this] { loadSelectedFile(); };</code></pre>
+
+  <h2>Keyboard Focus</h2>
+  <p>
+    VoiceOver users often combine VoiceOver navigation with normal keyboard focus. The plugin should support both.
+  </p>
+
+  <h3>Make interactive controls focusable</h3>
+  <pre><code class="language-cpp">button.setWantsKeyboardFocus(true);
+slider.setWantsKeyboardFocus(true);
+listBox.setWantsKeyboardFocus(true);</code></pre>
+
+  <h3>Use explicit focus order inside dense sections</h3>
+  <pre><code class="language-cpp">startSlider.setExplicitFocusOrder(1);
+endSlider.setExplicitFocusOrder(2);
+sizeSlider.setExplicitFocusOrder(3);
+decaySlider.setExplicitFocusOrder(4);
+reverseButton.setExplicitFocusOrder(5);
+irGainSlider.setExplicitFocusOrder(6);</code></pre>
+
+  <h3>Section navigation shortcuts</h3>
+  <p>
+    BP-Convolution uses comma and period to jump between major focus groups. This is useful in plugin UIs where tabbing through every control can be slow.
+  </p>
+  <pre><code class="language-cpp">bool PluginEditor::keyPressed(const juce::KeyPress&amp; key)
+{
+    if (key.getKeyCode() == ',' || key.getTextCharacter() == ',')
+    {
+        focusGroup(-1);
+        return true;
+    }
+
+    if (key.getKeyCode() == '.' || key.getTextCharacter() == '.')
+    {
+        focusGroup(1);
+        return true;
+    }
+
+    return false;
+}</code></pre>
+
+  <h2>Sliders</h2>
+  <p>
+    Sliders should expose a short name, a meaningful description, and help text that explains keyboard increments. If a slider needs custom fine/coarse steps, subclass it and handle arrow keys explicitly.
+  </p>
+
+  <h3>Standard accessible slider setup</h3>
+  <pre><code class="language-cpp">sizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+sizeSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 20);
+sizeSlider.setWantsKeyboardFocus(true);
+sizeSlider.setTitle("Size");
+sizeSlider.setDescription("Time stretch the impulse response, 0.1x to 4.0x");
+sizeSlider.setHelpText("Use arrow keys to adjust by 0.1, shift plus arrows for 0.01");
+sizeSlider.setExplicitFocusOrder(3);</code></pre>
+
+  <h3>Custom arrow-key slider pattern</h3>
+  <pre><code class="language-cpp">class AccessibleSlider : public juce::Slider
+{
+public:
+    AccessibleSlider(double normalStep, double fineStep)
+        : step(normalStep), fine(fineStep) {}
+
+    bool keyPressed(const juce::KeyPress&amp; key) override
+    {
+        auto delta = key.getModifiers().isShiftDown() ? fine : step;
+
+        if (key == juce::KeyPress::leftKey || key == juce::KeyPress::downKey)
+        {
+            setValue(getValue() - delta, juce::sendNotificationSync);
+            return true;
+        }
+
+        if (key == juce::KeyPress::rightKey || key == juce::KeyPress::upKey)
+        {
+            setValue(getValue() + delta, juce::sendNotificationSync);
+            return true;
+        }
+
+        return juce::Slider::keyPressed(key);
+    }
+
+private:
+    double step;
+    double fine;
+};</code></pre>
+
+  <h2>Accessible Lists and Tables</h2>
+  <p>
+    A common VoiceOver failure is a list whose rows are visually drawn but not named. In JUCE, if you use <code>ListBoxModel::paintListBoxItem()</code>, you must also override <code>getNameForRow()</code>. Otherwise VoiceOver may announce generic names such as "Row 1".
+  </p>
+
+  <h3>Accessible row names</h3>
+  <pre><code class="language-cpp">juce::String IRBrowser::getNameForRow(int rowNumber)
+{
+    if (rowNumber &lt; 0 || rowNumber &gt;= currentItems.size())
+        return {};
+
+    const auto&amp; item = currentItems.getReference(rowNumber);
+    return item.isDirectory() ? "Folder, " + item.getFileName()
+                              : item.getFileName();
+}</code></pre>
+
+  <h3>Painted rows are visual only</h3>
+  <pre><code class="language-cpp">void IRBrowser::paintListBoxItem(int rowNumber, juce::Graphics&amp; g,
+                                 int width, int height, bool rowIsSelected)
+{
+    if (rowNumber &lt; 0 || rowNumber &gt;= currentItems.size())
+        return;
+
+    if (rowIsSelected)
+        g.fillAll(juce::Colours::lightblue.darker());
+
+    auto&amp; item = currentItems.getReference(rowNumber);
+    auto prefix = item.isDirectory() ? "[Folder] " : "";
+    g.drawText(prefix + item.getFileName(), 10, 0, width - 20, height,
+               juce::Justification::centredLeft);
+}</code></pre>
+
+  <p>
+    The text drawn above is not the same as accessible text. The accessible text comes from <code>getNameForRow()</code>.
+  </p>
+
+  <h3>List/table checklist</h3>
+  <ul>
+    <li>Set a title on the list, such as <code>listBox.setTitle("File list")</code>.</li>
+    <li>Set a useful description explaining allowed keys and row types.</li>
+    <li>Override <code>getNameForRow()</code> for every row.</li>
+    <li>Keep row names concise but meaningful: "Folder, Halls" is better than just "Halls".</li>
+    <li>Update selected row state after refreshes so VoiceOver lands on the expected row.</li>
+    <li>Never hold references into a row array while refreshing the list. Copy the item first.</li>
+  </ul>
+
+  <h2>File Browser Pattern</h2>
+  <p>
+    A plugin file browser should preserve context. After loading a file, the user should remain in that folder. After closing and reopening the plugin editor, restore the browser to the last loaded file when possible.
+  </p>
+
+  <h3>Restore browser to last loaded IR</h3>
+  <pre><code class="language-cpp">auto lastLoadedIR = juce::File(PluginSettings::getInstance().getLastLoadedIR());
+if (lastLoadedIR.existsAsFile())
+{
+    browser.showFile(lastLoadedIR);
+}
+else
+{
+    auto defaultFolder = PluginSettings::getInstance().getDefaultIRFolder();
+    if (defaultFolder.isDirectory())
+        browser.navigateToFolder(defaultFolder);
+}</code></pre>
+
+  <h3>Load selected file without losing folder context</h3>
+  <pre><code class="language-cpp">void IRBrowser::loadSelectedFile()
+{
+    auto row = listBox.getSelectedRow();
+    if (row &lt; 0 || row &gt;= currentItems.size())
+        return;
+
+    auto item = currentItems.getReference(row);
+    if (!item.existsAsFile())
+        return;
+
+    selectedItemPath = item.getFullPathName();
+
+    if (fileSelectedCallback)
+        fileSelectedCallback(item);
+}</code></pre>
+
+  <h2>Backspace and Browser Shortcuts</h2>
+  <p>
+    If a shortcut should work while focus is in a child control, implement the shortcut in that child control. For example, Backspace should work when focus is inside the file list, not only when the parent browser component has focus.
+  </p>
+
+  <h3>Subclass the list box for Backspace</h3>
+  <pre><code class="language-cpp">class BrowserListBox : public juce::ListBox
+{
+public:
+    bool keyPressed(const juce::KeyPress&amp; key) override
+    {
+        if (key == juce::KeyPress::backspaceKey)
+        {
+            if (onBackspace)
+                onBackspace();
+
+            return true;
+        }
+
+        return juce::ListBox::keyPressed(key);
+    }
+
+    std::function&lt;void()&gt; onBackspace;
+};</code></pre>
+
+  <h3>Wire it to folder navigation</h3>
+  <pre><code class="language-cpp">listBox.onBackspace = [this] { goUp(); };</code></pre>
+
+  <h2>Announcements</h2>
+  <p>
+    Use announcements for important changes that are not otherwise obvious from the focused control. Good examples include loading an IR, opening or closing a panel, navigating to another folder, and adding or removing a folder.
+  </p>
+
+  <pre><code class="language-cpp">juce::AccessibilityHandler::postAnnouncement(
+    "Loaded impulse response: " + file.getFileName(),
+    juce::AccessibilityHandler::AnnouncementPriority::high);</code></pre>
+
+  <h3>Announcement guidelines</h3>
+  <ul>
+    <li>Keep announcements short.</li>
+    <li>Include the changed item name when possible.</li>
+    <li>Use high priority for user-initiated actions such as loading a file or opening settings.</li>
+    <li>Do not announce every slider movement if the slider already exposes its value. That becomes noisy.</li>
+  </ul>
+
+  <h2>Modal and Overlay Panels</h2>
+  <p>
+    Settings panels and overlays should behave like separate accessible regions.
+  </p>
+
+  <ul>
+    <li>Give the overlay its own accessibility group title.</li>
+    <li>Move focus into the overlay when it opens.</li>
+    <li>Provide a clear Close button with title, description, and help text.</li>
+    <li>Announce opening and closing.</li>
+    <li>When the overlay closes, return focus to a sensible control, usually the button that opened it.</li>
+  </ul>
+
+  <pre><code class="language-cpp">settingsButton.onClick = [this]
+{
+    settingsPage.setVisible(true);
+    settingsPage.toFront(true);
+
+    juce::AccessibilityHandler::postAnnouncement(
+        "Settings opened",
+        juce::AccessibilityHandler::AnnouncementPriority::high);
+};</code></pre>
+
+  <h2>Common Bugs to Avoid</h2>
+  <ul>
+    <li><strong>Generic rows:</strong> If VoiceOver says "Row 1", override <code>getNameForRow()</code>.</li>
+    <li><strong>Dangling row references:</strong> Copy a selected file before calling any function that refreshes or clears the list.</li>
+    <li><strong>Lost browser location:</strong> Store the last loaded file path and restore the browser to that file's parent folder.</li>
+    <li><strong>Shortcut works only sometimes:</strong> Put the shortcut handler on the focused child control, such as the list box.</li>
+    <li><strong>Silent state changes:</strong> Post announcements for loading, navigation, opening, closing, adding, and removing.</li>
+    <li><strong>Duplicate load paths:</strong> If a browser owns file selection, put the Load button in the browser, not in an unrelated controls section.</li>
+    <li><strong>Painted-only labels:</strong> Anything drawn manually must also be represented through accessible names, titles, or handlers.</li>
+  </ul>
+
+  <h2>Reusable Accessibility Checklist</h2>
+  <section class="checklist">
+    <h3>Before coding</h3>
+    <ul>
+      <li>List the major UI groups.</li>
+      <li>Define the keyboard route through the plugin.</li>
+      <li>Decide which controls need custom keyboard behavior.</li>
+      <li>Identify any painted rows, tables, meters, graphs, or custom components that need explicit accessible names.</li>
+    </ul>
+
+    <h3>For every group</h3>
+    <ul>
+      <li>Set <code>keyboardFocusContainer</code> when the group contains multiple controls.</li>
+      <li>Add an <code>AccessibilityHandler</code> with <code>AccessibilityRole::group</code>.</li>
+      <li>Return a clear title from <code>getTitle()</code>.</li>
+    </ul>
+
+    <h3>For every button</h3>
+    <ul>
+      <li>Call <code>setWantsKeyboardFocus(true)</code>.</li>
+      <li>Set button text.</li>
+      <li>Set title, description, and help text.</li>
+      <li>Announce important action results.</li>
+    </ul>
+
+    <h3>For every slider</h3>
+    <ul>
+      <li>Set title, description, help text, and focus order.</li>
+      <li>Use text boxes when helpful for exact values.</li>
+      <li>Implement custom arrow behavior for nonstandard increments.</li>
+      <li>Attach a visual label where appropriate.</li>
+    </ul>
+
+    <h3>For every list or table</h3>
+    <ul>
+      <li>Set list title and description.</li>
+      <li>Override row names.</li>
+      <li>Keep selection stable after refreshes.</li>
+      <li>Make Enter and Backspace behavior predictable.</li>
+      <li>Expose load/open/delete actions through buttons when the action is not obvious.</li>
+    </ul>
+
+    <h3>Before release</h3>
+    <ul>
+      <li>Navigate the whole plugin with keyboard only.</li>
+      <li>Navigate the whole plugin with VoiceOver.</li>
+      <li>Verify row names, slider names, button names, and group names are announced correctly.</li>
+      <li>Verify shortcut keys work when focus is on the child component that users naturally interact with.</li>
+      <li>Close and reopen the plugin editor and confirm state restoration.</li>
+    </ul>
+  </section>
+
+  <h2>Reference Implementation Files in BP-Convolution</h2>
+  <ul>
+    <li><code>Source/UI/IRBrowser.h</code> and <code>Source/UI/IRBrowser.cpp</code>: accessible file browser, row names, Backspace, Back/Forward/Load buttons, state restoration support.</li>
+    <li><code>Source/UI/IRControls.h</code> and <code>Source/UI/IRControls.cpp</code>: accessible control group, sliders, current IR label.</li>
+    <li><code>Source/UI/AccessibleSlider.h</code>: custom keyboard step behavior for sliders.</li>
+    <li><code>Source/PluginEditor.cpp</code>: group focus navigation, settings overlay, browser restoration from last loaded IR.</li>
+    <li><code>Source/Utils/PluginSettings.cpp</code>: storing IR folders, default folder, and last loaded IR path.</li>
+  </ul>
+
+  <p class="note">
+    Last updated for the BP-Convolution accessibility pass that added accessible IR browser rows, stable folder restoration, browser Backspace navigation, and browser-owned Load IR controls.
+  </p>
+</main>
+</body>
+</html>
