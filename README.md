@@ -1,122 +1,83 @@
 # BP-Trigger
 
-BP-Trigger is an accessible, tempo-aware volume shaper for macOS. It combines drawn ducking curves with sidechain triggering, so the same plug-in can create rhythmic pumping, react to incoming hits, or do both at once.
+BP-Trigger is a volume shaper for rhythmic ducking, sidechain-triggered movement, and creative modulation. Draw a gain curve, run it from the DAW clock, trigger it from an incoming signal, or combine both approaches.
 
-The interface was designed with keyboard and screen-reader use as a first-class requirement. Every control has a descriptive accessible name, the curve is exposed as sixteen individually editable points, and the main interface is organised into navigable groups.
+It is built for producers who want precise control over the shape of a duck, without losing the practical side of working with a sidechain input. AU and VST3 builds are provided for macOS.
 
-## Features
+## How it works
 
-- AU and VST3 formats for macOS
-- Sixteen-point, automatable volume curves
-- Host-synchronised, sidechain, and combined trigger modes
-- Stereo sidechain input on plug-in channels 3/4 in REAPER
-- Thresholded sidechain solo monitoring
-- Adjustable sidechain detector release from 1 to 100 ms
-- Optional look-ahead pre-duck and ramp-down shaping
-- Optional sidechain-driven ring modulation
-- Optional two-band processing with an independent high-band curve
-- Save and load curve presets
+The plug-in plays a sixteen-point gain curve. At 0%, a point applies the full amount set by **Depth**; at 100%, it leaves the signal unchanged. Points between those values define the movement between the initial duck and the return to full level.
 
-## Signal flow
+That curve can be started in three ways:
 
-BP-Trigger receives the audio to be shaped on its stereo main input. Its optional stereo sidechain bus is used for detection and ring modulation. In REAPER, this sidechain bus appears on plug-in input channels 3/4.
+- **Grid** follows the host transport. Pick a division from one bar to a sixteenth note, with triplet options included.
+- **Sidechain** starts the curve when the sidechain signal crosses the threshold.
+- **Grid and Sidechain** follows the grid but lets sidechain hits take over when they call for a deeper duck.
 
-The trigger starts a sixteen-point gain curve. A curve point set to 0% applies the selected depth fully; a point at 100% leaves the signal at unity gain. The plug-in interpolates between points, producing a continuous gain movement rather than stepped changes.
+The **Speed** control changes the rate at which the curve is read. **Ramp Down** and **Ramp Shape** let you shape the movement immediately before the first point. **Pre-duck** adds up to 10 ms of look-ahead to the main signal, so the duck can begin just ahead of a detected hit.
 
-The processing mode determines when that curve starts:
+## Sidechain in REAPER
 
-- **Grid** — Runs the curve in time with the host transport. Choose a division from one bar down to a sixteenth note, including triplet divisions.
-- **Sidechain** — Starts the curve when the sidechain detector crosses the Sidechain Threshold.
-- **Grid and Sidechain** — Runs to the grid and also responds to sidechain hits. The sidechain envelope takes priority when it calls for more ducking than the current grid position.
+BP-Trigger uses a stereo main input and an optional stereo sidechain bus. In REAPER, the sidechain bus is on plug-in inputs 3/4.
 
-## Sidechain setup in REAPER
+1. Put BP-Trigger on the track you want to shape.
+2. Set that track to four channels or more.
+3. Send the trigger source to channels 3/4 on the BP-Trigger track.
+4. Choose **Sidechain** or **Grid and Sidechain**.
+5. Set **Sidechain Threshold** to the level that should start the curve.
 
-1. Place BP-Trigger on the track whose audio you want to shape.
-2. Set the track channel count to at least four.
-3. Send the trigger source to channels 3/4 of the BP-Trigger track.
-4. Select **Sidechain** or **Grid and Sidechain** as the Trigger Mode.
-5. Set the Sidechain Threshold, then enable **Sidechain Solo** to audition only the audio that reaches the detector threshold.
+Turn on **Sidechain Solo** when setting the threshold. It mutes the normal output and plays only the sidechain signal that reaches the detector threshold, so you can hear what is actually being picked up.
 
-BP-Trigger supports a stereo main input and an optional stereo sidechain bus. Keeping the main bus stereo ensures the sidechain remains on REAPER inputs 3/4.
+**Detector Release** controls how quickly the detector resets after a hit. Its range is 1 to 100 ms. Faster settings are useful for short, closely spaced transients; longer settings keep the detector open for longer material.
 
-## Controls
+## Sound-shaping controls
 
-### Timing
+### Ring modulation
 
-- **Trigger Mode** selects Grid, Sidechain, or Grid and Sidechain processing.
-- **Grid Division** sets the duration of one curve cycle in Grid and Grid and Sidechain modes.
-- **Speed** scales how quickly the curve progresses.
-- **Ramp Down** creates a shaped transition before the first curve point. The plug-in reports matching latency compensation.
-- **Ramp Shape** controls the curvature of that transition.
+**Ringmod Sidechain** uses the incoming sidechain signal to modulate the shaped audio. **Ringmod Intensity** sets how strongly it is applied. This is independent of the trigger mode, so it can be used as a texture tool as well as part of a sidechain setup.
 
-### Sidechain
+### Band mode
 
-- **Sidechain Solo** replaces the normal output with the sidechain monitor. The monitor is silent below the Sidechain Threshold, making it easy to hear exactly what reaches the detector.
-- **Ringmod Sidechain** uses the sidechain to modulate the shaped signal.
-- **Ringmod Intensity** sets the amount of that modulation.
-- **Pre-duck** delays the main audio by up to 10 ms so the gain change can begin before a detected hit.
-- **Sidechain Threshold** sets the detector level from -40 dB to 0 dB.
-- **Detector Release** sets how quickly the detector resets after a hit, from 1 to 100 ms.
+Enable **Band** to split the signal at **Band Cutoff** (20 Hz to 20 kHz). The main curve then shapes the low band. Enable **High Curve** to give the high band its own sixteen-point curve and **High Depth** control. This makes it possible to keep a kick-driven duck focused in the low end, or create different movement above and below the split.
 
-### Output and bands
+### Depth and mix
 
-- **Band** splits the shaped signal at the selected cutoff frequency. The main curve shapes the low band.
-- **High Curve** enables a second sixteen-point curve for the high band.
-- **Band Cutoff** sets the split frequency from 20 Hz to 20 kHz.
-- **Depth** sets the amount of gain reduction for the full signal, or the low band when Band is enabled.
-- **High Depth** sets the amount of gain reduction for the high curve.
-- **Mix** blends between dry and shaped audio.
+**Depth** sets the amount of reduction for the main curve, or the low curve in Band mode. **Mix** blends the dry and shaped signals. With High Curve enabled, **High Depth** sets the amount of reduction for the high band.
 
 ## Curves and presets
 
-The main curve, and the optional high-band curve, each provide sixteen points from 0% to 100%. They are exposed as plug-in parameters, so they can be automated from the host.
-
-Use **Curve Presets** to save or load a curve. Presets use the `.triggercurve` extension and are stored in:
+Both the main curve and the optional high curve have sixteen editable, automatable points. Use **Curve Presets** to save or load a shape. Presets are stored as `.triggercurve` files in:
 
 `~/Documents/BLIND PRODUCERS PLUGINS/BP-Trigger`
 
-## Accessibility and keyboard navigation
+## Keyboard and screen-reader use
 
-- Use `Tab` and `Shift+Tab` to move through controls.
-- Use the arrow keys to adjust a focused control. Hold `Shift` for fine adjustment where supported.
-- Use `,` and `.` to move between the Timing, Sidechain, Output, and Curve groups.
-- Each curve point is independently focusable and announces its position and value to supported screen readers.
+The interface is fully keyboard accessible. Use `Tab` and `Shift+Tab` to move through controls, and the arrow keys to change the focused value. Hold `Shift` for finer adjustment where available. Use `,` and `.` to move between the Timing, Sidechain, Output, and Curve sections.
 
-The detailed VoiceOver guide is available at [Accessibility guide/VoiceOver_Accessible_Plugin_UI_Guide.html](Accessibility%20guide/VoiceOver_Accessible_Plugin_UI_Guide.html).
+Every curve point is individually focusable and exposed to supported screen readers with its position and value.
 
-## Building from source
+## Building
 
-### Requirements
+Requirements:
 
 - macOS with Xcode or the Xcode Command Line Tools
 - CMake 3.22 or newer
 - A local checkout of [JUCE](https://github.com/juce-framework/JUCE)
-
-### Build
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_DIR=/path/to/JUCE
 cmake --build build --target BPTrigger_All -j 4
 ```
 
-The built plug-ins are placed in:
+The build outputs are placed in:
 
 ```text
 build/BPTrigger_artefacts/Release/AU/BP-Trigger.component
 build/BPTrigger_artefacts/Release/VST3/BP-Trigger.vst3
 ```
 
-The generated bundles are ad-hoc signed during development. Apply the appropriate signing and notarisation process before distributing a commercial release.
-
-## Project layout
-
-```text
-Source/                         Plug-in processor, editor, and accessible controls
-Source/UI/                      Curve editor and accessibility helpers
-Accessibility guide/            VoiceOver usage guide
-CMakeLists.txt                  CMake and JUCE build definition
-```
+The development bundles are ad-hoc signed. Sign and notarise release builds before distributing them.
 
 ## Contributing
 
-Bug reports and accessibility feedback are welcome. Please include the host, plug-in format, macOS version, and steps to reproduce when reporting an issue.
+If you report a problem, please include the plug-in format, host, macOS version, and clear steps to reproduce it. Accessibility feedback is especially useful.
