@@ -5,6 +5,11 @@ project(BPTrigger VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    # Link the C++ runtime into the plug-in, so it runs without the Visual C++ redistributable.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 include(FetchContent)
 
 FetchContent_Declare(juce
@@ -26,13 +31,23 @@ juce_add_plugin(BPTrigger
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-target_sources(BPTrigger
-    PRIVATE
-        Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp
-        Source/UI/AccessibleSlider.h
-        Source/UI/CurveEditor.h
-        Source/UI/CurveEditor.cpp)
+set(BP_TRIGGER_SOURCES
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    Source/UI/AccessibleComboBox.h
+    Source/UI/AccessibleSlider.h
+    Source/UI/AccessibleToggleButton.h
+    Source/UI/CurveEditor.h
+    Source/UI/CurveEditor.cpp
+    Source/UI/ScreenReader.h
+    Source/UI/ScreenReader.cpp)
+
+if(WIN32)
+    # UI Automation calls for Windows screen readers, kept apart from the JUCE sources.
+    list(APPEND BP_TRIGGER_SOURCES Source/UI/WindowsUIAutomation.cpp)
+endif()
+
+target_sources(BPTrigger PRIVATE ${BP_TRIGGER_SOURCES})
 
 target_compile_definitions(BPTrigger
     PUBLIC
@@ -48,3 +63,52 @@ target_link_libraries(BPTrigger
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if(WIN32)
+    target_link_libraries(BPTrigger PRIVATE oleaut32)
+endif()
+
+# Windows test tools: an offline host for the built VST3, and the editor driven
+# from the keyboard while a UI Automation client records what a screen reader hears.
+option(BP_TRIGGER_BUILD_TESTS "Build the Windows test tools" OFF)
+
+if(BP_TRIGGER_BUILD_TESTS AND WIN32)
+    juce_add_console_app(BPTriggerCheck PRODUCT_NAME "BPTriggerCheck")
+    target_sources(BPTriggerCheck PRIVATE Tools/BPTriggerCheck.cpp)
+    target_compile_definitions(BPTriggerCheck PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+    target_link_libraries(BPTriggerCheck
+        PRIVATE
+            juce::juce_audio_utils
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    juce_add_console_app(BPTriggerUiTest PRODUCT_NAME "BPTriggerUiTest")
+    target_sources(BPTriggerUiTest PRIVATE Tools/BPTriggerUiTest.cpp ${BP_TRIGGER_SOURCES})
+    target_include_directories(BPTriggerUiTest PRIVATE Source)
+    target_compile_definitions(BPTriggerUiTest PRIVATE
+        JucePlugin_Name="BP-Trigger"
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+    target_link_libraries(BPTriggerUiTest
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_dsp
+            oleaut32
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    # Built next to BPTriggerUiTest, which starts it.
+    add_executable(BPTriggerUiaProbe Tools/BPTriggerUiaProbe.cpp)
+    target_link_libraries(BPTriggerUiaProbe PRIVATE ole32 oleaut32)
+    set_target_properties(BPTriggerUiaProbe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BPTriggerUiTest_artefacts/$<CONFIG>")
+    add_dependencies(BPTriggerUiTest BPTriggerUiaProbe)
+endif()

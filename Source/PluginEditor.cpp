@@ -18,7 +18,8 @@ private:
 SidechainerAudioProcessorEditor::Group::Group (juce::String groupTitle)
     : title (std::move (groupTitle))
 {
-    setFocusContainerType (juce::Component::FocusContainerType::keyboardFocusContainer);
+    // A screen reader enters the section as a named group, and Tab runs on through every section.
+    setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
     setTitle (title);
 }
 
@@ -254,7 +255,8 @@ void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
     }
     else
     {
-        slider.setTextValueSuffix (suffix);
+        // The parameter's text already ends in its unit ("1.00x", "0.0 ms").
+        slider.setTextValueSuffix ({});
     }
 
     slider.setTitle (title);
@@ -386,6 +388,26 @@ bool SidechainerAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
     return juce::AudioProcessorEditor::keyPressed (key);
 }
 
+void SidechainerAudioProcessorEditor::focusGained (FocusChangeType)
+{
+    // The host gives the focus to the plug-in's window, and the window to the editor:
+    // hand it on to the control used last, or the first one, so Tab and the arrows work at once.
+    auto* control = lastFocusedControl.getComponent();
+
+    if (control == nullptr || ! control->isShowing() || ! control->getWantsKeyboardFocus())
+        control = &triggerModeBox;
+
+    control->grabKeyboardFocus();
+}
+
+void SidechainerAudioProcessorEditor::focusOfChildComponentChanged (FocusChangeType)
+{
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+    if (focused != nullptr && focused != this && isParentOf (focused))
+        lastFocusedControl = focused;
+}
+
 void SidechainerAudioProcessorEditor::updateHighCurveVisibility()
 {
     const auto shouldShow = highCurveEnabledButton.getToggleState();
@@ -400,18 +422,32 @@ void SidechainerAudioProcessorEditor::updateHighCurveVisibility()
 
 void SidechainerAudioProcessorEditor::focusGroup (int delta)
 {
-    for (size_t attempt = 0; attempt < focusGroups.size(); ++attempt)
-    {
-        focusedGroup = (focusedGroup + delta + static_cast<int> (focusGroups.size())) % static_cast<int> (focusGroups.size());
+    const auto groupCount = static_cast<int> (focusGroups.size());
 
-        if (auto* group = focusGroups[(size_t) focusedGroup])
+    // Move on from the section holding the focus, wherever Tab or a click left it.
+    auto index = delta > 0 ? -1 : groupCount;
+
+    for (int i = 0; i < groupCount; ++i)
+        if (focusGroups[(size_t) i]->hasKeyboardFocus (true))
+            index = i;
+
+    for (int attempt = 0; attempt < groupCount; ++attempt)
+    {
+        index = (index + delta + groupCount) % groupCount;
+
+        if (auto* group = focusGroups[(size_t) index])
         {
             if (! group->isVisible())
                 continue;
 
+            const auto focusWasInGroup = group->hasKeyboardFocus (true);
             group->grabKeyboardFocus();
-            juce::AccessibilityHandler::postAnnouncement (group->getTitle(),
-                                                          juce::AccessibilityHandler::AnnouncementPriority::medium);
+
+            if (ScreenReader::readsGroupNameOnFocus && ! focusWasInGroup && group->hasKeyboardFocus (true))
+                return;
+
+            ScreenReader::announce (*this, group->getTitle(),
+                                    juce::AccessibilityHandler::AnnouncementPriority::medium);
             return;
         }
     }

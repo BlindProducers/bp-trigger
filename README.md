@@ -38,13 +38,18 @@ Depth sets the amount of reduction for the main curve, or the low curve in Band 
 
 Both the main curve and the optional high curve have sixteen editable, automatable points. Use Curve Presets to save or load a shape. Presets are stored as `.triggercurve` files in:
 
-`~/Documents/BLIND PRODUCERS PLUGINS/BP-Trigger`
+- macOS: `~/Documents/BLIND PRODUCERS PLUGINS/BP-Trigger`
+- Windows: `Documents\BLIND PRODUCERS PLUGINS\BP-Trigger` in your user folder
+
+The files are the same on both systems, so curves can be shared between them.
 
 ## Keyboard and screen-reader navigation
 
-The interface is fully keyboard accessible. Use `Tab` and `Shift+Tab` to move through controls, and the arrow keys to change the focused value. Hold `Shift` for finer adjustment where available. Use `,` and `.` to move between the Timing, Sidechain, Output, and Curve sections.
+The interface is fully keyboard accessible. When the plug-in window opens, the focus is on Trigger Mode. `Tab` and `Shift+Tab` move through every control in every section. `,` and `.` jump to the previous or next section: Timing, Sidechain, Output, and the curves.
 
-Every curve point is individually focusable and exposed to supported screen readers with its position and value.
+Change the focused value with the arrow keys. Hold `Shift` for finer adjustment where available. `Page Up` and `Page Down` move ten steps, `Home` goes to the top of the range and `End` to the bottom. In Trigger Mode and Grid Division, `Home` and `End` pick the first and last choice. Each slider is followed by its value box, where you can type a value and press `Enter`. Press `Enter` on a check box to turn it on or off.
+
+Every curve point is individually focusable and exposed to supported screen readers with its position and value. On macOS that is VoiceOver; on Windows, NVDA, JAWS and Narrator.
 
 ## Build from source
 
@@ -55,7 +60,11 @@ git clone <repository-url>
 cd bp-trigger
 ```
 
-On the first configure, CMake downloads the pinned JUCE source snapshot automatically. An internet connection is required for that first step. With CMake 3.22 or newer installed, build the plug-in:
+On the first configure, CMake downloads the pinned JUCE source snapshot automatically. An internet connection is required for that first step. To use a JUCE checkout you already have at the same commit, add `-DFETCHCONTENT_SOURCE_DIR_JUCE=<path to JUCE>` to the first `cmake` command.
+
+### macOS
+
+With CMake 3.22 or newer installed, build the plug-in:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -70,3 +79,30 @@ build/BPTrigger_artefacts/Release/VST3/BP-Trigger.vst3
 ```
 
 The development bundles are ad-hoc signed.
+
+### Windows
+
+Install Visual Studio 2022 with the Desktop development with C++ workload, which includes CMake. In a Developer PowerShell:
+
+```bat
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --target BPTrigger_VST3
+```
+
+Windows builds the VST3 only; Audio Units are a macOS format. The build output is placed in:
+
+```text
+build\BPTrigger_artefacts\Release\VST3\BP-Trigger.vst3
+```
+
+Copy the whole `BP-Trigger.vst3` folder to `C:\Program Files\Common Files\VST3`, or to `%LOCALAPPDATA%\Programs\Common\VST3` for your user only, and rescan plug-ins in your host. No Visual C++ redistributable is needed.
+
+### Windows tests
+
+Configure with `-DBP_TRIGGER_BUILD_TESTS=ON` to add the test tools. `BPTriggerCheck` loads the built VST3 as a host does and checks the sound in every trigger mode. `BPTriggerUiTest` drives the editor from the keyboard while `BPTriggerUiaProbe` records what UI Automation tells a screen reader; with `--vst3` it also opens the built VST3 in a host window and sends it the key messages a host passes on. The test windows stay in the background, so a running screen reader does not read them.
+
+```bat
+cmake --build build --config Release --target BPTrigger_VST3 BPTriggerCheck BPTriggerUiTest
+build\BPTriggerCheck_artefacts\Release\BPTriggerCheck.exe build\BPTrigger_artefacts\Release\VST3\BP-Trigger.vst3
+build\BPTriggerUiTest_artefacts\Release\BPTriggerUiTest.exe --vst3 build\BPTrigger_artefacts\Release\VST3\BP-Trigger.vst3
+```

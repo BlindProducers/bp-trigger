@@ -1,7 +1,9 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "UI/AccessibleComboBox.h"
 #include "UI/AccessibleSlider.h"
+#include "UI/AccessibleToggleButton.h"
 #include "UI/CurveEditor.h"
 
 class SidechainerAudioProcessorEditor final : public juce::AudioProcessorEditor
@@ -13,6 +15,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress& key) override;
+    void focusGained (FocusChangeType) override;
+    void focusOfChildComponentChanged (FocusChangeType) override;
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -51,12 +55,12 @@ private:
     CurveEditor curveEditor;
     CurveEditor highCurveEditor;
 
-    juce::ComboBox triggerModeBox;
-    juce::ComboBox divisionBox;
-    juce::ToggleButton sidechainSoloButton { "Sidechain Solo" };
-    juce::ToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
-    juce::ToggleButton bandEnabledButton { "Band" };
-    juce::ToggleButton highCurveEnabledButton { "High Curve" };
+    AccessibleComboBox triggerModeBox;
+    AccessibleComboBox divisionBox;
+    AccessibleToggleButton sidechainSoloButton { "Sidechain Solo" };
+    AccessibleToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
+    AccessibleToggleButton bandEnabledButton { "Band" };
+    AccessibleToggleButton highCurveEnabledButton { "High Curve" };
     AccessibleSlider speedSlider { 0.01, 0.001 };
     AccessibleSlider rampDownSlider { 0.1, 0.01 };
     AccessibleSlider rampShapeSlider { 0.01, 0.001 };
@@ -92,7 +96,7 @@ private:
     std::unique_ptr<SliderAttachment> mixAttachment;
 
     std::array<juce::Component*, 5> focusGroups {};
-    int focusedGroup = 0;
+    juce::Component::SafePointer<juce::Component> lastFocusedControl;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SidechainerAudioProcessorEditor)
 };
