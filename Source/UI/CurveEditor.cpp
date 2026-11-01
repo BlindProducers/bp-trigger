@@ -1,4 +1,5 @@
 #include "CurveEditor.h"
+#include "ScreenReader.h"
 
 namespace
 {
@@ -49,7 +50,8 @@ CurveEditor::CurveEditor (SidechainerAudioProcessor::APVTS& state,
       description (std::move (editorDescription))
 {
     setWantsKeyboardFocus (true);
-    setFocusContainerType (juce::Component::FocusContainerType::keyboardFocusContainer);
+    // A group for the screen reader that Tab passes through, as the editor's other sections.
+    setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
     setTitle (title);
     setDescription (description);
     setHelpText ("Use Tab to move through points. Use arrow keys to edit a point. Open Curve Presets to save or load shapes.");
@@ -159,8 +161,8 @@ void CurveEditor::showPresetMenu()
     presetFiles.sort();
 
     juce::PopupMenu menu;
-    constexpr int saveItemId = 1;
-    constexpr int firstPresetItemId = 1000;
+    static constexpr int saveItemId = 1;
+    static constexpr int firstPresetItemId = 1000;
 
     menu.addItem (saveItemId, "Save Current Curve...");
     menu.addSeparator();
@@ -176,20 +178,25 @@ void CurveEditor::showPresetMenu()
     }
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetButton),
-                        [this] (int result)
+                        [safeThis = juce::Component::SafePointer<CurveEditor> (this)] (int result)
                         {
+                            if (safeThis == nullptr)
+                                return;
+
                             if (result == saveItemId)
                             {
-                                saveCurrentCurve();
+                                safeThis->saveCurrentCurve();
                                 return;
                             }
 
+                            ScreenReader::restoreFocusAfterMenu();
+
                             const auto presetIndex = result - firstPresetItemId;
-                            if (juce::isPositiveAndBelow (presetIndex, presetFiles.size())
-                                && loadCurveFromFile (presetFiles.getReference (presetIndex)))
+                            if (juce::isPositiveAndBelow (presetIndex, safeThis->presetFiles.size())
+                                && safeThis->loadCurveFromFile (safeThis->presetFiles.getReference (presetIndex)))
                             {
-                                juce::AccessibilityHandler::postAnnouncement (title + " curve loaded",
-                                                                              juce::AccessibilityHandler::AnnouncementPriority::high);
+                                ScreenReader::announce (*safeThis, safeThis->title + " curve loaded",
+                                                        juce::AccessibilityHandler::AnnouncementPriority::high);
                             }
                         });
 }
@@ -215,8 +222,8 @@ void CurveEditor::saveCurrentCurve()
                                       file = file.withFileExtension (".triggercurve");
 
                                   if (saveCurveToFile (file))
-                                      juce::AccessibilityHandler::postAnnouncement (title + " curve saved",
-                                                                                    juce::AccessibilityHandler::AnnouncementPriority::high);
+                                      ScreenReader::announce (*this, title + " curve saved",
+                                                              juce::AccessibilityHandler::AnnouncementPriority::high);
                               });
 }
 
