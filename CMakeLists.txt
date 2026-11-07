@@ -32,6 +32,8 @@ juce_add_plugin(BPTrigger
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
 set(BP_TRIGGER_SOURCES
+    Source/Curve.h
+    Source/Curve.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/UI/AccessibleComboBox.h
@@ -68,11 +70,12 @@ if(WIN32)
     target_link_libraries(BPTrigger PRIVATE oleaut32)
 endif()
 
-# Windows test tools: an offline host for the built VST3, and the editor driven
-# from the keyboard while a UI Automation client records what a screen reader hears.
-option(BP_TRIGGER_BUILD_TESTS "Build the Windows test tools" OFF)
+# Test tools: an offline host for the built VST3, and a check of the curve editor's model.
+# On Windows, also the editor driven from the keyboard while a UI Automation client records
+# what a screen reader hears.
+option(BP_TRIGGER_BUILD_TESTS "Build the test tools" OFF)
 
-if(BP_TRIGGER_BUILD_TESTS AND WIN32)
+if(BP_TRIGGER_BUILD_TESTS)
     juce_add_console_app(BPTriggerCheck PRODUCT_NAME "BPTriggerCheck")
     target_sources(BPTriggerCheck PRIVATE Tools/BPTriggerCheck.cpp)
     target_compile_definitions(BPTriggerCheck PRIVATE
@@ -87,6 +90,18 @@ if(BP_TRIGGER_BUILD_TESTS AND WIN32)
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
 
+    juce_add_console_app(BPTriggerCurveTest PRODUCT_NAME "BPTriggerCurveTest")
+    target_sources(BPTriggerCurveTest PRIVATE Tools/BPTriggerCurveTest.cpp Source/Curve.cpp)
+    target_compile_definitions(BPTriggerCurveTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(BPTriggerCurveTest
+        PRIVATE
+            juce::juce_core
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+endif()
+
+if(BP_TRIGGER_BUILD_TESTS AND WIN32)
     juce_add_console_app(BPTriggerUiTest PRODUCT_NAME "BPTriggerUiTest")
     target_sources(BPTriggerUiTest PRIVATE Tools/BPTriggerUiTest.cpp ${BP_TRIGGER_SOURCES})
     target_include_directories(BPTriggerUiTest PRIVATE Source)
