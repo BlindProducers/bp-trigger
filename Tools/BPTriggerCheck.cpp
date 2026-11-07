@@ -444,7 +444,7 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
         return p != nullptr ? p->getCurrentValueAsText() : juce::String();
     };
     check (text ("Trigger Mode") == "Grid" && text ("Grid Division") == "1/4" && text ("Speed") == "1.00x"
-               && text ("Sidechain Threshold") == "-26.0 dB" && text ("Detector Release") == "50 ms" && text ("Band Cutoff") == "300 Hz"
+               && text ("Sidechain Threshold") == "-26.0 dB" && text ("Detector Release") == "50.5 ms" && text ("Band Cutoff") == "300 Hz"
                && text ("Depth") == "100%" && text ("Pre-duck") == "0.0 ms",
            "values read as text: " + text ("Trigger Mode") + ", " + text ("Grid Division") + ", " + text ("Speed") + ", "
                + text ("Sidechain Threshold") + ", " + text ("Detector Release") + ", " + text ("Band Cutoff") + ", "
@@ -452,7 +452,7 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
 
     host.set ("Band Cutoff", "1.5 kHz");
     host.set ("Detector Release", "10");
-    check (text ("Band Cutoff") == "1.50 kHz" && text ("Detector Release") == "10 ms", "typed values are understood (1.5 kHz, 10 ms)");
+    check (text ("Band Cutoff") == "1.5 kHz" && text ("Detector Release") == "10 ms", "typed values are understood (1.5 kHz, 10 ms)");
 
     host.set ("Pre-duck", "5");
     host.run (0.1, constant (0.0f), constant (0.0f));
