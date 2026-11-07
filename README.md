@@ -26,6 +26,10 @@ Detector Release controls how quickly the detector resets after a hit. Its range
 
 Ringmod Sidechain uses the incoming sidechain signal to modulate the main audio, in time with the sidechain. Ringmod Intensity sets how strongly it is applied. With Duck Ringmod on, the duck turns the ringmod down with the rest of the audio; turn it off to hear the ringmod through the duck. This is independent of the trigger mode, so it can be used as a texture tool as well as part of a sidechain setup.
 
+### Amplitude modulation
+
+Amplitude Modulation makes the main audio's level follow the sidechain's waveform, rising and falling at the sidechain's pitch, so an 808 on the sidechain makes a melody flutter. Amplitude Modulation Depth sets how far the level drops at each trough. The flutter follows the sidechain's level, so it fades with the 808, and the main audio plays on unchanged once the sidechain stops. It never makes the main audio louder. To hear the flutter without the duck, set Depth to 0%.
+
 ### Band mode
 
 Enable Band to split the signal at Band Cutoff (20 Hz to 20 kHz). The main curve then shapes the low band. Enable High Curve to give the high band its own sixteen-point curve and High Depth control. This makes it possible to keep a kick-driven duck focused in the low end, or create different movement above and below the split.

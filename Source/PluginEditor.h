@@ -59,6 +59,7 @@ private:
     AccessibleToggleButton sidechainSoloButton { "Sidechain Solo" };
     AccessibleToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
     AccessibleToggleButton ringmodDuckedButton { "Duck Ringmod" };
+    AccessibleToggleButton amplitudeModulationButton { "Amplitude Modulation" };
     AccessibleToggleButton bandEnabledButton { "Band" };
     AccessibleToggleButton highCurveEnabledButton { "High Curve" };
     // Normal and fine steps, in the unit each value is shown in; percentages step in fractions (0.01 is 1%).
@@ -69,13 +70,14 @@ private:
     AccessibleSlider thresholdSlider { 1.0, 0.1 };
     AccessibleSlider sensitivitySlider { 1.0, 0.1 };
     AccessibleSlider ringmodIntensitySlider { 0.01, 0.001 };
+    AccessibleSlider amplitudeModulationDepthSlider { 0.01, 0.001 };
     AccessibleSlider bandCutoffSlider { 100.0, 10.0 };
     AccessibleSlider depthSlider { 0.01, 0.001 };
     AccessibleSlider highDepthSlider { 0.01, 0.001 };
     AccessibleSlider mixSlider { 0.01, 0.001 };
 
     juce::Label speedLabel, rampDownLabel, rampShapeLabel, preduckLabel, thresholdLabel, sensitivityLabel;
-    juce::Label ringmodIntensityLabel;
+    juce::Label ringmodIntensityLabel, amplitudeModulationDepthLabel;
     juce::Label bandCutoffLabel, depthLabel, highDepthLabel, mixLabel;
 
     std::unique_ptr<ComboBoxAttachment> triggerModeAttachment;
@@ -83,6 +85,7 @@ private:
     std::unique_ptr<ButtonAttachment> sidechainSoloAttachment;
     std::unique_ptr<ButtonAttachment> ringmodEnabledAttachment;
     std::unique_ptr<ButtonAttachment> ringmodDuckedAttachment;
+    std::unique_ptr<ButtonAttachment> amplitudeModulationAttachment;
     std::unique_ptr<ButtonAttachment> bandEnabledAttachment;
     std::unique_ptr<ButtonAttachment> highCurveEnabledAttachment;
     std::unique_ptr<SliderAttachment> speedAttachment;
@@ -92,6 +95,7 @@ private:
     std::unique_ptr<SliderAttachment> thresholdAttachment;
     std::unique_ptr<SliderAttachment> sensitivityAttachment;
     std::unique_ptr<SliderAttachment> ringmodIntensityAttachment;
+    std::unique_ptr<SliderAttachment> amplitudeModulationDepthAttachment;
     std::unique_ptr<SliderAttachment> bandCutoffAttachment;
     std::unique_ptr<SliderAttachment> depthAttachment;
     std::unique_ptr<SliderAttachment> highDepthAttachment;

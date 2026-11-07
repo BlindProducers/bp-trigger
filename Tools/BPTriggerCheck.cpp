@@ -368,6 +368,24 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
            "with Duck Ringmod off, the ringmod plays through the duck (gain " + juce::String (duckedGain, 3) + ")");
     host.set ("Duck Ringmod", "1");
     host.set ("Ringmod Sidechain", "0");
+
+    // A 50 Hz sidechain at 0.5 for half a second, then silence. Amplitude Modulation at 100% keeps the input's
+    // 0.5 at its peaks and halves it at its troughs, and gives the input back unchanged once the sidechain stops.
+    std::cout << "\nAmplitude Modulation:" << std::endl;
+    host.reset();
+    host.set ("Depth", "0");
+    host.set ("Amplitude Modulation", "1");
+    const Signal fiftyHertz = [rate] (juce::int64 t)
+    {
+        return t < static_cast<juce::int64> (0.5 * rate) ? 0.5f * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * 50.0 * static_cast<double> (t) / rate)) : 0.0f;
+    };
+    output = host.run (1.5, constant (0.5f), fiftyHertz);
+    const auto modulated = std::minmax_element (output.begin() + static_cast<long> (0.1 * rate), output.begin() + static_cast<long> (0.5 * rate));
+    check (*modulated.second < 0.5001f && std::abs (*modulated.first - 0.25f) < 0.001f,
+           "it moves the input between full level and half at 100% (" + juce::String (*modulated.first, 3) + " to " + juce::String (*modulated.second, 3) + ")");
+    check (std::abs (output.back() - 0.5f) < 0.0001f, "after the sidechain stops, the input comes back unchanged (" + juce::String (output.back(), 4) + ")");
+    host.set ("Amplitude Modulation", "0");
+    host.set ("Depth", "100");
 }
 
 void checkBandMode (juce::AudioPluginFormat& format, const juce::PluginDescription& description)
@@ -431,12 +449,13 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
 
     auto allThere = true;
     for (auto name : { "Depth", "High Depth", "Mix", "Trigger Mode", "Grid Division", "Speed", "Pre-duck", "Ramp Down", "Ramp Shape",
-                       "Sidechain Threshold", "Detector Release", "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Duck Ringmod", "Band",
+                       "Sidechain Threshold", "Detector Release", "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Duck Ringmod",
+                       "Amplitude Modulation", "Amplitude Modulation Depth", "Band",
                        "High Curve", "Band Cutoff" })
         allThere = allThere && names.contains (name);
     for (int i = 1; i <= 16; ++i)
         allThere = allThere && names.contains ("Curve Point " + juce::String (i)) && names.contains ("High Curve Point " + juce::String (i));
-    check (allThere, "all 18 controls and both sets of 16 curve points are automatable (" + juce::String (names.size()) + " parameters)");
+    check (allThere, "all 20 controls and both sets of 16 curve points are automatable (" + juce::String (names.size()) + " parameters)");
 
     const auto text = [&host] (const juce::String& name)
     {

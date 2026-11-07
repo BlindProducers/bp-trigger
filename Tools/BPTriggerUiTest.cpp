@@ -489,7 +489,8 @@ int main (int argc, char* argv[])
 
         // Tab runs through every control in every section, skipping the value boxes, then wraps.
         juce::StringArray expected { "Grid Division", "Speed", "Ramp Down", "Ramp Shape",
-                                     "Sidechain Solo", "Ringmod Sidechain", "Duck Ringmod", "Ringmod Intensity", "Pre-duck",
+                                     "Sidechain Solo", "Ringmod Sidechain", "Duck Ringmod", "Ringmod Intensity",
+                                     "Amplitude Modulation", "Amplitude Modulation Depth", "Pre-duck",
                                      "Sidechain Threshold", "Detector Release",
                                      "Band", "High Curve", "Band Cutoff", "Depth", "Mix",
                                      "Main / Low Curve Editor" };

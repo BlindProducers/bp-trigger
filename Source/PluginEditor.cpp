@@ -104,7 +104,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
       curveEditor (parameters, "curvePoint", "Main / Low Curve Editor"),
       highCurveEditor (parameters, "highCurvePoint", "High Curve Editor")
 {
-    setSize (820, 940);
+    setSize (820, 970);
     setWantsKeyboardFocus (true);
     setTitle ("BP-Trigger");
 
@@ -126,23 +126,28 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     ringmodDuckedButton.setTitle ("Duck Ringmod");
     ringmodDuckedButton.setExplicitFocusOrder (8);
 
+    amplitudeModulationButton.setWantsKeyboardFocus (true);
+    amplitudeModulationButton.setTitle ("Amplitude Modulation");
+    amplitudeModulationButton.setExplicitFocusOrder (10);
+
     configureSlider (speedSlider, speedLabel, "Speed", 3);
     configureSlider (rampDownSlider, rampDownLabel, "Ramp Down", 4);
     configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape", 5);
-    configureSlider (preduckSlider, preduckLabel, "Pre-duck", 10);
-    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", 11);
-    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", 12);
+    configureSlider (preduckSlider, preduckLabel, "Pre-duck", 12);
+    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", 13);
+    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", 14);
     configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", 9);
+    configureSlider (amplitudeModulationDepthSlider, amplitudeModulationDepthLabel, "Amplitude Modulation Depth", 11);
     bandEnabledButton.setWantsKeyboardFocus (true);
     bandEnabledButton.setTitle ("Band");
-    bandEnabledButton.setExplicitFocusOrder (13);
+    bandEnabledButton.setExplicitFocusOrder (15);
     highCurveEnabledButton.setWantsKeyboardFocus (true);
     highCurveEnabledButton.setTitle ("High Curve");
-    highCurveEnabledButton.setExplicitFocusOrder (14);
-    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff", 15);
-    configureSlider (depthSlider, depthLabel, "Depth", 16);
-    configureSlider (highDepthSlider, highDepthLabel, "High Depth", 17);
-    configureSlider (mixSlider, mixLabel, "Mix", 18);
+    highCurveEnabledButton.setExplicitFocusOrder (16);
+    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff", 17);
+    configureSlider (depthSlider, depthLabel, "Depth", 18);
+    configureSlider (highDepthSlider, highDepthLabel, "High Depth", 19);
+    configureSlider (mixSlider, mixLabel, "Mix", 20);
 
     // The arrows move these through the units they are shown in: decibels, and milliseconds of release.
     thresholdSlider.setDisplayUnit ([] (double gain) { return (double) juce::Decibels::gainToDecibels ((float) gain); },
@@ -155,6 +160,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     sidechainSoloAttachment = std::make_unique<ButtonAttachment> (parameters, "sidechainSolo", sidechainSoloButton);
     ringmodEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "ringmodEnabled", ringmodEnabledButton);
     ringmodDuckedAttachment = std::make_unique<ButtonAttachment> (parameters, "ringmodDucked", ringmodDuckedButton);
+    amplitudeModulationAttachment = std::make_unique<ButtonAttachment> (parameters, "amplitudeModulationEnabled", amplitudeModulationButton);
     bandEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "bandEnabled", bandEnabledButton);
     highCurveEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "highCurveEnabled", highCurveEnabledButton);
     speedAttachment = std::make_unique<SliderAttachment> (parameters, "speed", speedSlider);
@@ -164,6 +170,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     thresholdAttachment = std::make_unique<SliderAttachment> (parameters, "threshold", thresholdSlider);
     sensitivityAttachment = std::make_unique<SliderAttachment> (parameters, "sensitivity", sensitivitySlider);
     ringmodIntensityAttachment = std::make_unique<SliderAttachment> (parameters, "ringmodIntensity", ringmodIntensitySlider);
+    amplitudeModulationDepthAttachment = std::make_unique<SliderAttachment> (parameters, "amplitudeModulationDepth", amplitudeModulationDepthSlider);
     bandCutoffAttachment = std::make_unique<SliderAttachment> (parameters, "bandCutoff", bandCutoffSlider);
     depthAttachment = std::make_unique<SliderAttachment> (parameters, "depth", depthSlider);
     highDepthAttachment = std::make_unique<SliderAttachment> (parameters, "highDepth", highDepthSlider);
@@ -186,6 +193,9 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
                          static_cast<juce::Component*> (&ringmodDuckedButton),
                          static_cast<juce::Component*> (&ringmodIntensitySlider),
                          static_cast<juce::Component*> (&ringmodIntensityLabel),
+                         static_cast<juce::Component*> (&amplitudeModulationButton),
+                         static_cast<juce::Component*> (&amplitudeModulationDepthSlider),
+                         static_cast<juce::Component*> (&amplitudeModulationDepthLabel),
                          static_cast<juce::Component*> (&preduckSlider), static_cast<juce::Component*> (&preduckLabel),
                          static_cast<juce::Component*> (&thresholdSlider), static_cast<juce::Component*> (&thresholdLabel),
                          static_cast<juce::Component*> (&sensitivitySlider), static_cast<juce::Component*> (&sensitivityLabel) })
@@ -248,7 +258,7 @@ void SidechainerAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (22);
     area.removeFromTop (54);
 
-    auto top = area.removeFromTop (380);
+    auto top = area.removeFromTop (410);
     auto timing = top.removeFromLeft (250);
     top.removeFromLeft (12);
     auto sidechain = top.removeFromLeft (306);
@@ -285,6 +295,9 @@ void SidechainerAudioProcessorEditor::resized()
     ringmodDuckedButton.setBounds (sidechainArea.removeFromTop (26).withTrimmedLeft (112));
     sidechainArea.removeFromTop (8);
     layoutSlider (ringmodIntensitySlider, sidechainArea);
+    amplitudeModulationButton.setBounds (sidechainArea.removeFromTop (26).withTrimmedLeft (112));
+    sidechainArea.removeFromTop (8);
+    layoutSlider (amplitudeModulationDepthSlider, sidechainArea);
     layoutSlider (preduckSlider, sidechainArea);
     layoutSlider (thresholdSlider, sidechainArea);
     layoutSlider (sensitivitySlider, sidechainArea);
