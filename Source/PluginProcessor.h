@@ -53,6 +53,7 @@ private:
 
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void refreshParameterCache();
+    double blockModulationDc (double input, size_t channel) noexcept;
     void updateLatencyForPreduck();
     float getCurveValue (float phase, const std::array<std::atomic<float>*, curvePointCount>& points) const noexcept;
     float getPhaseFromElapsedSamples (double elapsedSamples, double cycleSamples, double rampSamples) const noexcept;
@@ -90,6 +91,9 @@ private:
     juce::AudioBuffer<float> mainDelay;
     juce::AudioBuffer<float> sidechainDelay;
     std::array<float, 2> bandLowpassState {};
+    std::array<float, 2> plainBandLowpassState {};
+    std::array<std::array<double, 2>, 2> modulationDcState {};
+    double modulationDcB0 = 1.0, modulationDcB1 = -2.0, modulationDcA1 = -2.0, modulationDcA2 = 1.0;
     std::array<std::atomic<float>*, curvePointCount> highCurvePoints {};
     int delayWritePosition = 0;
     int maxLookaheadSamples = 1;

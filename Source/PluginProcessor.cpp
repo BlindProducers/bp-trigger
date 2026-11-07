@@ -14,6 +14,7 @@ constexpr auto maximumRingmodSmoothingMs = 10.0f;
 constexpr auto ringmodFullScaleDrive = 2.0f;
 constexpr auto amplitudeModulationSmoothingMs = 10.0f;
 constexpr auto amplitudeModulationEnvelopeReleaseMs = 100.0f;
+constexpr auto modulationDcCutoffHz = 10.0;
 constexpr auto minimumThresholdDb = -40.0f;
 constexpr auto minimumDetectorReleaseMs = 1.0f;
 constexpr auto maximumDetectorReleaseMs = 100.0f;
@@ -343,6 +344,17 @@ void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     clockedProcessingBlend = 0.0f;
     sidechainTriggerArmed = true;
     bandLowpassState.fill (0.0f);
+    plainBandLowpassState.fill (0.0f);
+    modulationDcState = {};
+
+    // A Butterworth high-pass for what the ringmod and amplitude modulation add.
+    const auto w0 = juce::MathConstants<double>::twoPi * modulationDcCutoffHz / sampleRate;
+    const auto alpha = std::sin (w0) / juce::MathConstants<double>::sqrt2;   // sin (w0) / 2Q, with Q = 1 / sqrt 2
+    const auto a0 = 1.0 + alpha;
+    modulationDcB0 = 0.5 * (1.0 + std::cos (w0)) / a0;
+    modulationDcB1 = -(1.0 + std::cos (w0)) / a0;
+    modulationDcA1 = -2.0 * std::cos (w0) / a0;
+    modulationDcA2 = (1.0 - alpha) / a0;
     freeRunningGridPhase = 0.0;
     refreshParameterCache();
     smoothedRingmodDucked = cachedRingmodDucked ? 1.0f : 0.0f;
@@ -604,6 +616,33 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                                : amplitudeModulationEnvelope[(size_t) juce::jmin (ch, 1)];
                 wet *= juce::jlimit (0.0f, 1.0f, 1.0f - smoothedAmplitudeModulationDepth * 0.5f * (envelope - ringSidechain));
 
+                // The ringmod and amplitude modulation turn main audio at the sidechain's frequencies into DC and
+                // sub-bass. What they add goes through a 10 Hz high-pass; the main audio itself is not filtered.
+                const auto channel = (size_t) sourceChannel;
+                if (ringDepth > 0.0f || smoothedAmplitudeModulationDepth > 0.0f)
+                {
+                    auto plainWet = dry * smoothedGain;
+                    auto& plainLowpass = plainBandLowpassState[channel];
+
+                    if (cachedBandEnabled)
+                    {
+                        plainLowpass += bandCoeff * (dry - plainLowpass);
+                        plainWet = (dry - plainLowpass) * smoothedHighGain + plainLowpass * smoothedGain;
+                    }
+                    else
+                    {
+                        plainLowpass = dry;
+                    }
+
+                    wet = plainWet + static_cast<float> (blockModulationDc (wet - plainWet, channel));
+                }
+                else
+                {
+                    // Nothing is added, so the plain band split is the band split, and the high-pass is at rest.
+                    plainBandLowpassState[channel] = bandLowpassState[channel];
+                    modulationDcState[channel] = {};
+                }
+
                 buffer.setSample (ch, sample, dry + cachedMix * clockedProcessingBlend * (wet - dry));
             }
         }
@@ -622,6 +661,15 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         delayWritePosition = (delayWritePosition + 1) % delaySize;
     }
+}
+
+double SidechainerAudioProcessor::blockModulationDc (double input, size_t channel) noexcept
+{
+    auto& state = modulationDcState[channel];
+    const auto output = modulationDcB0 * input + state[0];
+    state[0] = modulationDcB1 * input - modulationDcA1 * output + state[1];
+    state[1] = modulationDcB0 * input - modulationDcA2 * output;
+    return output;
 }
 
 void SidechainerAudioProcessor::triggerSidechainEnvelope() noexcept

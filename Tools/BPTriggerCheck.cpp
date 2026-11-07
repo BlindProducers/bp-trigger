@@ -345,32 +345,39 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     check (std::all_of (output.begin() + 48, output.end(), [] (float x) { return x == 0.0f; }), "a sidechain below the threshold is silent");
     host.set ("Sidechain Solo", "0");
 
+    // The ringmod and amplitude modulation add nothing at DC, so these use a 1 kHz input at 0.5 and read
+    // its level as its peak over one cycle.
+    const auto levelAt = [rate] (const std::vector<float>& samples, double seconds)
+    {
+        const auto first = samples.begin() + static_cast<long> (seconds * rate);
+        return std::abs (*std::max_element (first, first + static_cast<long> (0.001 * rate), [] (float a, float b) { return std::abs (a) < std::abs (b); }));
+    };
+
     std::cout << "\nRingmod:" << std::endl;
     host.reset();
     host.set ("Trigger Mode", "Sidechain");
     host.set ("Ringmod Sidechain", "1");
-    output = host.run (0.5, constant (0.5f), constant (0.04f));
-    check (std::abs (output[(size_t) (0.4 * rate)] - 0.5f * (1.0f - 2.0f * 0.04f)) < 0.001f, "Ringmod Intensity 100% multiplies by the sidechain");
+    output = host.run (0.5, sine (0.5f), constant (0.04f));
+    check (std::abs (levelAt (output, 0.4) - 0.5f * (1.0f - 2.0f * 0.04f)) < 0.001f, "Ringmod Intensity 100% multiplies by the sidechain");
     host.set ("Ringmod Intensity", "50");
-    output = host.run (0.5, constant (0.5f), constant (0.04f));
-    check (std::abs (output[(size_t) (0.4 * rate)] - 0.5f * (1.0f - 0.04f)) < 0.001f, "Ringmod Intensity 50% does half as much");
+    output = host.run (0.5, sine (0.5f), constant (0.04f));
+    check (std::abs (levelAt (output, 0.4) - 0.5f * (1.0f - 0.04f)) < 0.001f, "Ringmod Intensity 50% does half as much");
 
-    // A sidechain of 0.3 triggers the curve; 0.1 s in, the gain is ducked to g. Ducked, the output is
-    // 0.5 g (1 - 0.6); with Duck Ringmod off the ringmod passes the duck, so it is 0.5 (g - 0.6).
+    // A sidechain of 0.3 triggers the curve; 0.1 s in, the gain is ducked to g. Ducked, the level is
+    // 0.5 g (1 - 0.6); with Duck Ringmod off the ringmod passes the duck, so it is 0.5 |g - 0.6|.
     host.set ("Ringmod Intensity", "100");
     host.reset();
-    const auto ducked = host.run (0.2, constant (0.5f), constant (0.3f))[(size_t) (0.1 * rate)];
-    const auto duckedGain = ducked / (0.5f * 0.4f);
+    const auto duckedGain = levelAt (host.run (0.2, sine (0.5f), constant (0.3f)), 0.1) / (0.5f * 0.4f);
     host.set ("Duck Ringmod", "0");
     host.reset();
-    const auto unducked = host.run (0.2, constant (0.5f), constant (0.3f))[(size_t) (0.1 * rate)];
-    check (duckedGain < 0.9f && std::abs (unducked - 0.5f * (duckedGain - 0.6f)) < 0.001f,
+    const auto unducked = levelAt (host.run (0.2, sine (0.5f), constant (0.3f)), 0.1);
+    check (duckedGain < 0.9f && std::abs (unducked - 0.5f * std::abs (duckedGain - 0.6f)) < 0.002f,
            "with Duck Ringmod off, the ringmod plays through the duck (gain " + juce::String (duckedGain, 3) + ")");
     host.set ("Duck Ringmod", "1");
     host.set ("Ringmod Sidechain", "0");
 
     // A 50 Hz sidechain at 0.5 for half a second, then silence. Amplitude Modulation at 100% keeps the input's
-    // 0.5 at its peaks and halves it at its troughs, and gives the input back unchanged once the sidechain stops.
+    // level at the sidechain's peaks and halves it at its troughs, and gives the input back once it stops.
     std::cout << "\nAmplitude Modulation:" << std::endl;
     host.reset();
     host.set ("Depth", "0");
@@ -379,11 +386,17 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     {
         return t < static_cast<juce::int64> (0.5 * rate) ? 0.5f * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * 50.0 * static_cast<double> (t) / rate)) : 0.0f;
     };
-    output = host.run (1.5, constant (0.5f), fiftyHertz);
-    const auto modulated = std::minmax_element (output.begin() + static_cast<long> (0.1 * rate), output.begin() + static_cast<long> (0.5 * rate));
-    check (*modulated.second < 0.5001f && std::abs (*modulated.first - 0.25f) < 0.001f,
-           "it moves the input between full level and half at 100% (" + juce::String (*modulated.first, 3) + " to " + juce::String (*modulated.second, 3) + ")");
-    check (std::abs (output.back() - 0.5f) < 0.0001f, "after the sidechain stops, the input comes back unchanged (" + juce::String (output.back(), 4) + ")");
+    output = host.run (1.5, sine (0.5f), fiftyHertz);
+    auto lowest = 1.0f, highest = 0.0f;
+    for (auto seconds = 0.1; seconds < 0.49; seconds += 0.001)
+    {
+        lowest = juce::jmin (lowest, levelAt (output, seconds));
+        highest = juce::jmax (highest, levelAt (output, seconds));
+    }
+    // A cycle's peak seldom lands on the sidechain's trough, so the lowest level reads a little over 0.25.
+    check (highest < 0.5005f && std::abs (lowest - 0.25f) < 0.005f,
+           "it moves the input between full level and half at 100% (" + juce::String (lowest, 3) + " to " + juce::String (highest, 3) + ")");
+    check (std::abs (levelAt (output, 1.45) - 0.5f) < 0.0005f, "after the sidechain stops, the input comes back unchanged (" + juce::String (levelAt (output, 1.45), 4) + ")");
     host.set ("Amplitude Modulation", "0");
     host.set ("Depth", "100");
 }
