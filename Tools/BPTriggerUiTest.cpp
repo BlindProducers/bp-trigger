@@ -142,12 +142,12 @@ void pressNow (juce::Component& window, const juce::KeyPress& key)
 juce::KeyPress key (int code, juce::ModifierKeys modifiers = {})   { return juce::KeyPress (code, modifiers, 0); }
 juce::KeyPress character (juce::juce_wchar c)                      { return juce::KeyPress (static_cast<int> (c), {}, c); }
 
-// Types a value into a slider's value box: Tab to the box, type, Enter.
+// Types a value into a slider's value box: Return opens it, type, Return.
 void typeInto (juce::Component& window, juce::Component* slider, const juce::String& text)
 {
     slider->grabKeyboardFocus();
     settle();
-    press (window, key (juce::KeyPress::tabKey));
+    press (window, key (juce::KeyPress::returnKey));
 
     if (auto* box = dynamic_cast<juce::TextEditor*> (focused()))
     {
@@ -487,18 +487,14 @@ int main (int argc, char* argv[])
         settle();
         check (focused() == triggerMode, "opening the plug-in lands on Trigger Mode (" + describe (focused()) + ")");
 
-        // Tab runs through every section, each slider followed by its value box, then wraps.
-        juce::StringArray expected { "Grid Division", "Speed", "edit 1.00x", "Ramp Down", "edit 0.0 ms", "Ramp Shape", "edit 1.00x",
-                                     "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "edit 100%", "Pre-duck", "edit 0.0 ms",
-                                     "Sidechain Threshold", "edit -26.0 dB", "Detector Release", "edit 50 ms",
-                                     "Band", "High Curve", "Band Cutoff", "edit 300 Hz", "Depth", "edit 100%", "Mix", "edit 100%",
+        // Tab runs through every control in every section, skipping the value boxes, then wraps.
+        juce::StringArray expected { "Grid Division", "Speed", "Ramp Down", "Ramp Shape",
+                                     "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Pre-duck",
+                                     "Sidechain Threshold", "Detector Release",
+                                     "Band", "High Curve", "Band Cutoff", "Depth", "Mix",
                                      "Main / Low Curve Editor" };
         for (int i = 1; i <= 16; ++i)
-        {
-            auto* point = findTitled (*mainCurve, "Main / Low Curve Editor point " + juce::String (i));
-            expected.add (titleOf (point));
-            expected.add ("edit " + valueOf (point));
-        }
+            expected.add ("Main / Low Curve Editor point " + juce::String (i));
         expected.add ("Curve Presets");
         expected.add ("Trigger Mode");
 
@@ -540,17 +536,16 @@ int main (int argc, char* argv[])
         findTitled (*editor, "Detector Release")->grabKeyboardFocus();
         settle();
         press (window, key (juce::KeyPress::tabKey));
-        press (window, key (juce::KeyPress::tabKey));
         check (titleOf (focused()) == "Band", "Tab from Sidechain's last stop goes on to Output (" + describe (focused()) + ")");
         press (window, character (','));
         check (focused() == solo, "and comma from there goes back to Sidechain (" + describe (focused()) + ")");
 
-        // Typing a value into the box sets the slider.
+        // Return opens the value box; typing a value and Return sets the slider and goes back to it.
         auto* speedBox = [&]() -> juce::TextEditor*
         {
             speed->grabKeyboardFocus();
             settle();
-            press (window, key (juce::KeyPress::tabKey));
+            press (window, key (juce::KeyPress::returnKey));
             return dynamic_cast<juce::TextEditor*> (focused());
         }();
         if (speedBox != nullptr)
@@ -558,15 +553,9 @@ int main (int argc, char* argv[])
             speedBox->setText ("2", juce::dontSendNotification);
             press (window, key (juce::KeyPress::returnKey));
         }
-        check (speedBox != nullptr && valueOf (speed) == "2.00x", "typing 2 and Enter in Speed's box sets " + valueOf (speed));
-        speed->grabKeyboardFocus();
-        settle();
-        press (window, key (juce::KeyPress::tabKey));
-        if (auto* box = dynamic_cast<juce::TextEditor*> (focused()))
-        {
-            box->setText ("1", juce::dontSendNotification);
-            press (window, key (juce::KeyPress::returnKey));
-        }
+        check (speedBox != nullptr && valueOf (speed) == "2.00x", "Return, 2 and Return in Speed sets " + valueOf (speed));
+        check (focused() == speed, "and the focus is back on Speed (" + describe (focused()) + ")");
+        typeInto (window, speed, "1");
         check (valueOf (speed) == "1.00x", "and typing 1 sets it back to " + valueOf (speed));
     }
 

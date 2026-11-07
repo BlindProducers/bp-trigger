@@ -24,7 +24,8 @@ public:
 
     juce::Component* getDefaultComponent (juce::Component* parent) override
     {
-        return traverser.getDefaultComponent (scopeFor (parent));
+        const auto controls = getAllComponents (parent);
+        return controls.empty() ? nullptr : controls.front();
     }
 
     juce::Component* getNextComponent (juce::Component* current) override       { return step (current, 1); }
@@ -32,7 +33,15 @@ public:
 
     std::vector<juce::Component*> getAllComponents (juce::Component* parent) override
     {
-        return traverser.getAllComponents (scopeFor (parent));
+        auto controls = traverser.getAllComponents (scopeFor (parent));
+
+        // JUCE makes an editable value box a Tab stop of its own; Return on the slider opens it instead.
+        controls.erase (std::remove_if (controls.begin(), controls.end(), [] (const juce::Component* comp)
+                                        {
+                                            return dynamic_cast<const juce::Slider*> (comp->getParentComponent()) != nullptr;
+                                        }),
+                        controls.end());
+        return controls;
     }
 
 private:
@@ -43,10 +52,14 @@ private:
     }
 
     // Returns nothing past either end, so JUCE wraps to the first or last control.
+    // From inside a control, such as a slider's open value box, it steps from that control.
     juce::Component* step (juce::Component* current, int delta)
     {
-        const auto controls = traverser.getAllComponents (&editor);
-        const auto found = std::find (controls.begin(), controls.end(), current);
+        const auto controls = getAllComponents (&editor);
+        auto found = controls.end();
+
+        for (auto* comp = current; comp != nullptr && found == controls.end(); comp = comp->getParentComponent())
+            found = std::find (controls.begin(), controls.end(), comp);
 
         if (found == controls.end())
             return nullptr;

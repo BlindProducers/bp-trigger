@@ -3,13 +3,20 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
-class AccessibleSlider final : public juce::Slider
+class AccessibleSlider final : public juce::Slider,
+                               private juce::Label::Listener
 {
 public:
     AccessibleSlider (double normalStepIn, double fineStepIn)
         : normalStep (normalStepIn), fineStep (fineStepIn)
     {
         setWantsKeyboardFocus (true);
+    }
+
+    ~AccessibleSlider() override
+    {
+        if (auto* box = findValueBox())
+            box->removeListener (this);
     }
 
     void setKeyboardSteps (double normalStepIn, double fineStepIn)
@@ -58,10 +65,48 @@ public:
             return true;
         }
 
+        // Return opens the value box. Return there sets the value, and Escape leaves it unchanged.
+        if (keyCode == juce::KeyPress::returnKey && isTextBoxEditable())
+        {
+            if (auto* box = findValueBox())
+                box->addListener (this); // Added once: JUCE ignores a listener already in the list.
+
+            showTextBox();
+            return true;
+        }
+
         return juce::Slider::keyPressed (key);
     }
 
 private:
+    // The value box is the slider's only label child. JUCE may replace it, so it is looked up each time.
+    juce::Label* findValueBox() const
+    {
+        for (auto* child : getChildren())
+            if (auto* box = dynamic_cast<juce::Label*> (child))
+                return box;
+
+        return nullptr;
+    }
+
+    void labelTextChanged (juce::Label*) override {}
+
+    void editorHidden (juce::Label*, juce::TextEditor&) override
+    {
+        // Called just before the box's editor closes, so the check waits until it has.
+        // The focus comes back to the slider, unless Tab or a click moved it to another control.
+        juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<AccessibleSlider> (this)]
+        {
+            if (safeThis == nullptr)
+                return;
+
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+            if (focused == nullptr || safeThis->isParentOf (focused))
+                safeThis->grabKeyboardFocus();
+        });
+    }
+
     // More steps than any range holds, so Home and End reach the ends the arrows move towards
     // (Detector Release's top is its longest time, though the slider stores it lowest).
     static constexpr int stepsPastEitherEnd = 1000000;
