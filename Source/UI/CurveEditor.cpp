@@ -6,17 +6,14 @@ namespace
 class GroupHandler final : public juce::AccessibilityHandler
 {
 public:
-    GroupHandler (juce::Component& component, juce::String groupTitle, juce::String groupDescription)
+    GroupHandler (juce::Component& component, juce::String groupTitle)
         : AccessibilityHandler (component, juce::AccessibilityRole::group),
-          title (std::move (groupTitle)),
-          description (std::move (groupDescription)) {}
+          title (std::move (groupTitle)) {}
 
     juce::String getTitle() const override { return title; }
-    juce::String getDescription() const override { return description; }
 
 private:
     juce::String title;
-    juce::String description;
 };
 
 juce::String sliderPercentText (double value)
@@ -42,24 +39,18 @@ int graphHeightFor (int componentHeight)
 
 CurveEditor::CurveEditor (SidechainerAudioProcessor::APVTS& state,
                           juce::String pointParameterPrefix,
-                          juce::String editorTitle,
-                          juce::String editorDescription)
+                          juce::String editorTitle)
     : parameters (state),
       pointPrefix (std::move (pointParameterPrefix)),
-      title (std::move (editorTitle)),
-      description (std::move (editorDescription))
+      title (std::move (editorTitle))
 {
     setWantsKeyboardFocus (true);
     // A group for the screen reader that Tab passes through, as the editor's other sections.
     setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
     setTitle (title);
-    setDescription (description);
-    setHelpText ("Use Tab to move through points. Use arrow keys to edit a point. Open Curve Presets to save or load shapes.");
 
     presetButton.setWantsKeyboardFocus (true);
     presetButton.setTitle ("Curve Presets");
-    presetButton.setDescription ("Open saved trigger curve presets for " + title);
-    presetButton.setHelpText ("Press Space or Enter to save the current curve or load a saved trigger curve");
     presetButton.setExplicitFocusOrder (100);
     presetButton.onClick = [this] { showPresetMenu(); };
     addAndMakeVisible (presetButton);
@@ -71,8 +62,6 @@ CurveEditor::CurveEditor (SidechainerAudioProcessor::APVTS& state,
         slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 20);
         slider->setRange (0.0, 1.0, 0.01);
         slider->setTitle (title + " point " + juce::String (i + 1));
-        slider->setDescription ("Gain amount at step " + juce::String (i + 1) + " of 16, from 0 to 100 percent");
-        slider->setHelpText ("Use up and down arrows to adjust by one percent.");
         slider->setExplicitFocusOrder (i + 1);
         slider->textFromValueFunction = sliderPercentText;
         slider->valueFromTextFunction = sliderPercentValue;
@@ -307,5 +296,5 @@ juce::String CurveEditor::curvePointId (int index) const
 
 std::unique_ptr<juce::AccessibilityHandler> CurveEditor::createAccessibilityHandler()
 {
-    return std::make_unique<GroupHandler> (*this, title, description);
+    return std::make_unique<GroupHandler> (*this, title);
 }

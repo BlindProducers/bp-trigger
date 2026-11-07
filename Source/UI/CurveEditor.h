@@ -10,8 +10,7 @@ public:
 
     CurveEditor (SidechainerAudioProcessor::APVTS& state,
                  juce::String pointParameterPrefix,
-                 juce::String editorTitle,
-                 juce::String editorDescription);
+                 juce::String editorTitle);
 
     void paint (juce::Graphics& g) override;
     void resized() override;
@@ -32,7 +31,6 @@ private:
     SidechainerAudioProcessor::APVTS& parameters;
     juce::String pointPrefix;
     juce::String title;
-    juce::String description;
     juce::TextButton presetButton { "Curve Presets" };
     juce::Array<juce::File> presetFiles;
     std::unique_ptr<juce::FileChooser> fileChooser;

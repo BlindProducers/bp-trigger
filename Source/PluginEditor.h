@@ -37,13 +37,11 @@ private:
     void configureSlider (AccessibleSlider& slider,
                           juce::Label& label,
                           const juce::String& title,
-                          const juce::String& description,
                           const juce::String& suffix,
                           int focusOrder);
 
     void configureCombo (juce::ComboBox& combo,
                          const juce::String& title,
-                         const juce::String& description,
                          int focusOrder);
 
     void updateHighCurveVisibility();

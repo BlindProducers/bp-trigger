@@ -101,10 +101,8 @@ std::unique_ptr<juce::AccessibilityHandler> SidechainerAudioProcessorEditor::Gro
 SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAudioProcessor& p)
     : AudioProcessorEditor (&p),
       parameters (p.getValueTreeState()),
-      curveEditor (parameters, "curvePoint", "Main / Low Curve Editor",
-                   "Sixteen focusable curve points for the full-band curve, or the low band when Band is enabled"),
-      highCurveEditor (parameters, "highCurvePoint", "High Curve Editor",
-                       "Sixteen focusable curve points for the high band above the cutoff frequency")
+      curveEditor (parameters, "curvePoint", "Main / Low Curve Editor"),
+      highCurveEditor (parameters, "highCurvePoint", "High Curve Editor")
 {
     setSize (820, 940);
     setWantsKeyboardFocus (true);
@@ -114,54 +112,33 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     divisionBox.addItemList ({ "1 bar", "1/2", "1/2 triplet", "1/4", "1/4 triplet",
                                "1/8", "1/8 triplet", "1/16" },
                              1);
-    configureCombo (triggerModeBox, "Trigger Mode",
-                    "Choose whether the curve runs on the host grid, the sidechain input, or both", 1);
-    configureCombo (divisionBox, "Grid Division",
-                    "Choose the rhythmic division for synced ducking and sidechain envelope length", 2);
+    configureCombo (triggerModeBox, "Trigger Mode", 1);
+    configureCombo (divisionBox, "Grid Division", 2);
     sidechainSoloButton.setWantsKeyboardFocus (true);
     sidechainSoloButton.setTitle ("Sidechain Solo");
-    sidechainSoloButton.setDescription ("Monitor input channels 3/4 through the plugin output; audio is heard only while it reaches the Sidechain Threshold");
-    sidechainSoloButton.setHelpText ("Press Space to toggle thresholded sidechain monitoring on or off");
     sidechainSoloButton.setExplicitFocusOrder (6);
 
     ringmodEnabledButton.setWantsKeyboardFocus (true);
     ringmodEnabledButton.setTitle ("Ringmod Sidechain");
-    ringmodEnabledButton.setDescription ("Use input channels 3/4 as a ringmod source before the low and high curve shapers");
-    ringmodEnabledButton.setHelpText ("Press Space to toggle ringmod sidechain on or off");
     ringmodEnabledButton.setExplicitFocusOrder (7);
 
-    configureSlider (speedSlider, speedLabel, "Speed",
-                     "Scale the curve speed in synced and sidechain modes", "x", 3);
-    configureSlider (rampDownSlider, rampDownLabel, "Ramp Down",
-                     "Fade down into the first curve point before the trigger, with matching latency compensation", " ms", 4);
-    configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape",
-                     "Adjust the curve shape of the ramp down before the first curve point", "x", 5);
-    configureSlider (preduckSlider, preduckLabel, "Pre-duck",
-                     "Duck before sidechain hits by delaying the main signal up to ten milliseconds", " ms", 9);
-    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold",
-                     "Set the sidechain detector threshold from minus forty decibels to zero decibels", "dB", 10);
-    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release",
-                     "Set how quickly the sidechain detector resets after a trigger", "releaseMs", 11);
-    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity",
-                     "Set how strongly input channels 3/4 modulate the shaped path", "%", 8);
+    configureSlider (speedSlider, speedLabel, "Speed", "x", 3);
+    configureSlider (rampDownSlider, rampDownLabel, "Ramp Down", " ms", 4);
+    configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape", "x", 5);
+    configureSlider (preduckSlider, preduckLabel, "Pre-duck", " ms", 9);
+    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", "dB", 10);
+    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", "releaseMs", 11);
+    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", "%", 8);
     bandEnabledButton.setWantsKeyboardFocus (true);
     bandEnabledButton.setTitle ("Band");
-    bandEnabledButton.setDescription ("Split the signal at the cutoff so the main curve shapes the low band");
-    bandEnabledButton.setHelpText ("Press Space to toggle band splitting on or off");
     bandEnabledButton.setExplicitFocusOrder (13);
     highCurveEnabledButton.setWantsKeyboardFocus (true);
     highCurveEnabledButton.setTitle ("High Curve");
-    highCurveEnabledButton.setDescription ("Enable an independent curve for the high band above the cutoff frequency");
-    highCurveEnabledButton.setHelpText ("Press Space to toggle the high band curve editor on or off");
     highCurveEnabledButton.setExplicitFocusOrder (14);
-    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff",
-                     "Set the frequency that separates the low and high bands", "Hz", 15);
-    configureSlider (depthSlider, depthLabel, "Depth",
-                     "Set the full-band depth, or the low band depth when Band is enabled", "%", 16);
-    configureSlider (highDepthSlider, highDepthLabel, "High Depth",
-                     "Set the amount of gain reduction for the high band curve", "%", 17);
-    configureSlider (mixSlider, mixLabel, "Mix",
-                     "Blend between dry audio and shaped audio", "%", 18);
+    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff", "Hz", 15);
+    configureSlider (depthSlider, depthLabel, "Depth", "%", 16);
+    configureSlider (highDepthSlider, highDepthLabel, "High Depth", "%", 17);
+    configureSlider (mixSlider, mixLabel, "Mix", "%", 18);
 
     triggerModeAttachment = std::make_unique<ComboBoxAttachment> (parameters, "triggerMode", triggerModeBox);
     divisionAttachment = std::make_unique<ComboBoxAttachment> (parameters, "division", divisionBox);
@@ -219,7 +196,6 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
 void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
                                                        juce::Label& label,
                                                        const juce::String& title,
-                                                       const juce::String& description,
                                                        const juce::String& suffix,
                                                        int focusOrder)
 {
@@ -315,17 +291,6 @@ void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
     }
 
     slider.setTitle (title);
-    slider.setDescription (description);
-    if (suffix == "%")
-        slider.setHelpText ("Use arrow keys to adjust by one percent.");
-    else if (suffix == "dB")
-        slider.setHelpText ("Use arrow keys to adjust by one decibel. Hold Shift with arrow keys for one tenth of a decibel.");
-    else if (suffix == "releaseMs")
-        slider.setHelpText ("Use arrow keys to adjust by one millisecond. Hold Shift with arrow keys for one tenth of a millisecond.");
-    else if (suffix == "Hz")
-        slider.setHelpText ("Use arrow keys to adjust by one hundred hertz. Hold Shift with arrow keys for ten hertz.");
-    else
-        slider.setHelpText ("Use arrow keys to adjust. Hold Shift with arrow keys for fine adjustment.");
     slider.setExplicitFocusOrder (focusOrder);
 
     // The slider already carries this name, so screen readers skip the visible label.
@@ -337,13 +302,10 @@ void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
 
 void SidechainerAudioProcessorEditor::configureCombo (juce::ComboBox& combo,
                                                       const juce::String& title,
-                                                      const juce::String& description,
                                                       int focusOrder)
 {
     combo.setWantsKeyboardFocus (true);
     combo.setTitle (title);
-    combo.setDescription (description);
-    combo.setHelpText ("Use arrow keys to choose an option");
     combo.setExplicitFocusOrder (focusOrder);
 }
 
