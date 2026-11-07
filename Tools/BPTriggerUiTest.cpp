@@ -454,9 +454,9 @@ int main (int argc, char* argv[])
 
         auto groupsOk = true;
         for (auto* title : { "Timing", "Sidechain", "Output", "Main / Low Curve Editor" })
-            groupsOk = groupsOk && roleOf (findTitled (*editor, title)) == juce::AccessibilityRole::group && isInAccessibilityTree (*editor, title);
+            groupsOk = groupsOk && roleOf (findTitled (*editor, title)) == juce::AccessibilityRole::group && isInAccessibilityTree (window, title);
         check (groupsOk, "four named groups: Timing, Sidechain, Output, Main / Low Curve Editor");
-        check (! isInAccessibilityTree (*editor, "High Curve Editor") && ! isInAccessibilityTree (*editor, "High Depth"),
+        check (! isInAccessibilityTree (window, "High Curve Editor") && ! isInAccessibilityTree (window, "High Depth"),
                "the High Curve Editor and High Depth stay hidden until High Curve is on");
 
         check (roleOf (triggerMode) == juce::AccessibilityRole::comboBox && valueOf (triggerMode) == "Grid"
@@ -704,7 +704,7 @@ int main (int argc, char* argv[])
         settle();
         press (window, key (juce::KeyPress::returnKey));
         settle (100);
-        check (isInAccessibilityTree (*editor, "High Curve Editor") && isInAccessibilityTree (*editor, "High Depth"),
+        check (isInAccessibilityTree (window, "High Curve Editor") && isInAccessibilityTree (window, "High Depth"),
                "High Curve shows the High Curve Editor and High Depth");
 
         press (window, character ('.'));

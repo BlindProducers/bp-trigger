@@ -13,6 +13,51 @@ public:
 private:
     juce::String title;
 };
+
+// Tab and Shift-Tab run through the editor's controls and wrap around, as they would
+// in a keyboard focus container. The editor can't be one: screen readers would then
+// see it as a group of its own inside the host's group (see createAccessibilityHandler).
+class EditorKeyboardTraverser final : public juce::ComponentTraverser
+{
+public:
+    explicit EditorKeyboardTraverser (juce::Component& editorToTraverse) : editor (editorToTraverse) {}
+
+    juce::Component* getDefaultComponent (juce::Component* parent) override
+    {
+        return traverser.getDefaultComponent (scopeFor (parent));
+    }
+
+    juce::Component* getNextComponent (juce::Component* current) override       { return step (current, 1); }
+    juce::Component* getPreviousComponent (juce::Component* current) override   { return step (current, -1); }
+
+    std::vector<juce::Component*> getAllComponents (juce::Component* parent) override
+    {
+        return traverser.getAllComponents (scopeFor (parent));
+    }
+
+private:
+    // JUCE asks about the host's wrapper when it wraps around, so anything above the editor means the editor.
+    juce::Component* scopeFor (juce::Component* parent) const
+    {
+        return parent == nullptr || parent->isParentOf (&editor) ? &editor : parent;
+    }
+
+    // Returns nothing past either end, so JUCE wraps to the first or last control.
+    juce::Component* step (juce::Component* current, int delta)
+    {
+        const auto controls = traverser.getAllComponents (&editor);
+        const auto found = std::find (controls.begin(), controls.end(), current);
+
+        if (found == controls.end())
+            return nullptr;
+
+        const auto index = std::distance (controls.begin(), found) + delta;
+        return juce::isPositiveAndBelow (index, controls.size()) ? controls[(size_t) index] : nullptr;
+    }
+
+    juce::Component& editor;
+    juce::KeyboardFocusTraverser traverser;
+};
 }
 
 SidechainerAudioProcessorEditor::Group::Group (juce::String groupTitle)
@@ -50,10 +95,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
 {
     setSize (820, 940);
     setWantsKeyboardFocus (true);
-    setFocusContainerType (juce::Component::FocusContainerType::keyboardFocusContainer);
     setTitle ("BP-Trigger");
-    setDescription ("Volume shaping plugin with host sync and sidechain triggering");
-    setHelpText ("Press comma or period to move between major sections. Tab moves through controls.");
 
     triggerModeBox.addItemList ({ "Grid", "Sidechain", "Grid and Sidechain" }, 1);
     divisionBox.addItemList ({ "1 bar", "1/2", "1/2 triplet", "1/4", "1/4 triplet",
@@ -273,6 +315,8 @@ void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
         slider.setHelpText ("Use arrow keys to adjust. Hold Shift with arrow keys for fine adjustment.");
     slider.setExplicitFocusOrder (focusOrder);
 
+    // The slider already carries this name, so screen readers skip the visible label.
+    label.setAccessible (false);
     label.setText (title, juce::dontSendNotification);
     label.attachToComponent (&slider, true);
     label.setJustificationType (juce::Justification::centredRight);
@@ -398,6 +442,20 @@ void SidechainerAudioProcessorEditor::focusGained (FocusChangeType)
         control = &triggerModeBox;
 
     control->grabKeyboardFocus();
+}
+
+std::unique_ptr<juce::AccessibilityHandler> SidechainerAudioProcessorEditor::createAccessibilityHandler()
+{
+    // The host's plug-in window is already a group named after the plug-in,
+    // so the editor adds no second group and the sections sit directly inside it.
+    // This works only because the editor is no focus container: JUCE lists an
+    // element's children by focus traversal, which stops at focus containers.
+    return createIgnoredAccessibilityHandler (*this);
+}
+
+std::unique_ptr<juce::ComponentTraverser> SidechainerAudioProcessorEditor::createKeyboardFocusTraverser()
+{
+    return std::make_unique<EditorKeyboardTraverser> (*this);
 }
 
 void SidechainerAudioProcessorEditor::focusOfChildComponentChanged (FocusChangeType)

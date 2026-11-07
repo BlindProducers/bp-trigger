@@ -17,6 +17,8 @@ public:
     bool keyPressed (const juce::KeyPress& key) override;
     void focusGained (FocusChangeType) override;
     void focusOfChildComponentChanged (FocusChangeType) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    std::unique_ptr<juce::ComponentTraverser> createKeyboardFocusTraverser() override;
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
