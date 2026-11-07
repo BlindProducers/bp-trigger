@@ -47,7 +47,7 @@ The files are the same on both systems, so curves can be shared between them.
 
 The interface is fully keyboard accessible. When the plug-in window opens, the focus is on Trigger Mode. `Tab` and `Shift+Tab` move through every control in every section. `,` and `.` jump to the previous or next section: Timing, Sidechain, Output, and the curves.
 
-Change the focused value with the arrow keys. Hold `Shift` for finer adjustment where available. `Page Up` and `Page Down` move ten steps, `Home` goes to the top of the range and `End` to the bottom. In Trigger Mode and Grid Division, `Home` and `End` pick the first and last choice. To type a value, press `Enter` on a slider, type the value and press `Enter` again, or `Escape` to leave it unchanged. Press `Enter` on a check box to turn it on or off.
+Change the focused value with the arrow keys. Hold `Shift` for a step ten times finer. `Page Up` and `Page Down` move ten steps, `Home` goes to the top of the range and `End` to the bottom, and `Backspace` or `Delete` returns to the default. In Trigger Mode and Grid Division, `Home` and `End` pick the first and last choice. To type a value, press `Enter` on a slider, type the value and press `Enter` again, or `Escape` to leave it unchanged. Press `Enter` on a check box to turn it on or off.
 
 Every curve point is individually focusable and exposed to supported screen readers with its position and value. On macOS that is VoiceOver; on Windows, NVDA, JAWS and Narrator.
 

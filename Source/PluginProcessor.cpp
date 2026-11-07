@@ -62,9 +62,20 @@ std::unique_ptr<juce::RangedAudioParameter> makeFloatParam (const juce::String& 
         attributes);
 }
 
+// A number with up to the given decimals, without trailing zeros: "50%", "50.5%".
+juce::String trimmedNumber (float value, int decimals)
+{
+    auto text = juce::String (value, decimals);
+
+    if (text.containsChar ('.'))
+        text = text.trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+
+    return text;
+}
+
 juce::String percentStringFromValue (float value, int)
 {
-    return juce::String (juce::roundToInt (value * 100.0f)) + "%";
+    return trimmedNumber (value * 100.0f, 1) + "%";
 }
 
 float percentValueFromString (const juce::String& text)
@@ -80,7 +91,7 @@ std::unique_ptr<juce::RangedAudioParameter> makePercentParam (const juce::String
 {
     return std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { id, 1 }, name,
-        juce::NormalisableRange<float> (min, max, 0.01f),
+        juce::NormalisableRange<float> (min, max, 0.001f),
         defaultValue,
         juce::AudioParameterFloatAttributes()
             .withLabel ("%")
@@ -112,35 +123,23 @@ std::unique_ptr<juce::RangedAudioParameter> makeThresholdParam()
             .withValueFromStringFunction (thresholdValueFromString));
 }
 
-float detectorReleaseMsFromSensitivity (float value)
-{
-    return juce::jmap (juce::jlimit (0.0f, 1.0f, value),
-                       maximumDetectorReleaseMs, minimumDetectorReleaseMs);
-}
-
-float sensitivityFromDetectorReleaseMs (float ms)
-{
-    return juce::jlimit (0.0f, 1.0f,
-                         (maximumDetectorReleaseMs - ms) / (maximumDetectorReleaseMs - minimumDetectorReleaseMs));
-}
-
 juce::String detectorReleaseStringFromValue (float value, int)
 {
-    return juce::String (juce::roundToInt (detectorReleaseMsFromSensitivity (value))) + " ms";
+    return trimmedNumber (SidechainerAudioProcessor::detectorReleaseMsFromSensitivity (value), 1) + " ms";
 }
 
 float detectorReleaseValueFromString (const juce::String& text)
 {
     const auto ms = juce::jlimit (minimumDetectorReleaseMs, maximumDetectorReleaseMs,
                                   text.retainCharacters ("0123456789.-").getFloatValue());
-    return sensitivityFromDetectorReleaseMs (ms);
+    return SidechainerAudioProcessor::sensitivityFromDetectorReleaseMs (ms);
 }
 
 std::unique_ptr<juce::RangedAudioParameter> makeDetectorReleaseParam()
 {
     return std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "sensitivity", 1 }, "Detector Release",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f),
+        juce::NormalisableRange<float> (0.0f, 1.0f),
         0.5f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("ms")
@@ -151,7 +150,7 @@ std::unique_ptr<juce::RangedAudioParameter> makeDetectorReleaseParam()
 juce::String frequencyStringFromValue (float value, int)
 {
     if (value >= 1000.0f)
-        return juce::String (value / 1000.0f, value >= 10000.0f ? 1 : 2) + " kHz";
+        return trimmedNumber (value / 1000.0f, 2) + " kHz";
 
     return juce::String (juce::roundToInt (value)) + " Hz";
 }
@@ -181,6 +180,18 @@ std::unique_ptr<juce::RangedAudioParameter> makeBandCutoffParam()
             .withStringFromValueFunction (frequencyStringFromValue)
             .withValueFromStringFunction (frequencyValueFromString));
 }
+}
+
+float SidechainerAudioProcessor::detectorReleaseMsFromSensitivity (float sensitivity) noexcept
+{
+    return juce::jmap (juce::jlimit (0.0f, 1.0f, sensitivity),
+                       maximumDetectorReleaseMs, minimumDetectorReleaseMs);
+}
+
+float SidechainerAudioProcessor::sensitivityFromDetectorReleaseMs (float ms) noexcept
+{
+    return juce::jlimit (0.0f, 1.0f,
+                         (maximumDetectorReleaseMs - ms) / (maximumDetectorReleaseMs - minimumDetectorReleaseMs));
 }
 
 SidechainerAudioProcessor::SidechainerAudioProcessor()
@@ -265,7 +276,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SidechainerAudioProcessor::c
     for (int i = 0; i < curvePointCount; ++i)
     {
         const auto position = static_cast<float> (i) / static_cast<float> (curvePointCount - 1);
-        const auto defaultValue = juce::jlimit (0.0f, 1.0f, position * position);
+        const auto defaultValue = std::round (position * position * 100.0f) / 100.0f; // whole percents
         params.push_back (makePercentParam (curvePointId (i), "Curve Point " + juce::String (i + 1),
                                             0.0f, 1.0f, defaultValue));
     }
@@ -273,7 +284,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SidechainerAudioProcessor::c
     for (int i = 0; i < curvePointCount; ++i)
     {
         const auto position = static_cast<float> (i) / static_cast<float> (curvePointCount - 1);
-        const auto defaultValue = juce::jlimit (0.0f, 1.0f, position * position);
+        const auto defaultValue = std::round (position * position * 100.0f) / 100.0f; // whole percents
         params.push_back (makePercentParam (highCurvePointId (i), "High Curve Point " + juce::String (i + 1),
                                             0.0f, 1.0f, defaultValue));
     }

@@ -16,19 +16,10 @@ private:
     juce::String title;
 };
 
-juce::String sliderPercentText (double value)
+// Points are stored in steps of 0.1%, as the parameters are.
+double snapPoint (double value)
 {
-    return juce::String (juce::roundToInt (value * 100.0)) + "%";
-}
-
-double sliderPercentValue (const juce::String& text)
-{
-    return juce::jlimit (0.0, 1.0, text.retainCharacters ("0123456789.-").getDoubleValue() / 100.0);
-}
-
-double snapPercent (double value)
-{
-    return juce::jlimit (0.0, 1.0, std::round (value * 100.0) / 100.0);
+    return juce::jlimit (0.0, 1.0, std::round (value * 1000.0) / 1000.0);
 }
 
 int graphHeightFor (int componentHeight)
@@ -57,14 +48,11 @@ CurveEditor::CurveEditor (SidechainerAudioProcessor::APVTS& state,
 
     for (int i = 0; i < SidechainerAudioProcessor::curvePointCount; ++i)
     {
-        auto* slider = new AccessibleSlider (0.01, 0.01);
+        auto* slider = new AccessibleSlider (0.01, 0.001);
         slider->setSliderStyle (juce::Slider::LinearVertical);
         slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 20);
-        slider->setRange (0.0, 1.0, 0.01);
         slider->setTitle (title + " point " + juce::String (i + 1));
         slider->setExplicitFocusOrder (i + 1);
-        slider->textFromValueFunction = sliderPercentText;
-        slider->valueFromTextFunction = sliderPercentValue;
 
         addAndMakeVisible (slider);
         pointSliders.add (slider);
@@ -250,7 +238,7 @@ bool CurveEditor::loadCurveFromFile (const juce::File& file)
         const auto index = point->getIntAttribute ("index", loadedPoints);
         if (juce::isPositiveAndBelow (index, SidechainerAudioProcessor::curvePointCount))
         {
-            values[(size_t) index] = snapPercent (point->getDoubleAttribute ("value", 1.0));
+            values[(size_t) index] = snapPoint (point->getDoubleAttribute ("value", 1.0));
             ++loadedPoints;
         }
     }

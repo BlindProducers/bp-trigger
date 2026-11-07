@@ -564,9 +564,13 @@ int main (int argc, char* argv[])
         speed->grabKeyboardFocus();
         settle();
         press (window, key (juce::KeyPress::rightKey));
-        check (valueOf (speed) == "1.01x", "Right arrow: Speed " + valueOf (speed));
+        check (valueOf (speed) == "1.10x", "Right arrow: Speed " + valueOf (speed));
         press (window, key (juce::KeyPress::leftKey));
         check (valueOf (speed) == "1.00x", "Left arrow: Speed " + valueOf (speed));
+        press (window, key (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier));
+        check (valueOf (speed) == "1.01x", "Shift+Right: a tenth, Speed " + valueOf (speed));
+        press (window, key (juce::KeyPress::backspaceKey));
+        check (valueOf (speed) == "1.00x", "Backspace: back to the default, Speed " + valueOf (speed));
 
         threshold->grabKeyboardFocus();
         settle();
@@ -597,7 +601,8 @@ int main (int argc, char* argv[])
         check (valueOf (firstPoint) == "1%" && std::abs (state.getRawParameterValue ("curvePoint00")->load() - 0.01f) < 1.0e-4f,
                "Up arrow on point 1: " + valueOf (firstPoint));
 
-        // As in Atlas: Home goes to the top, End to the bottom, Page Up and Page Down move ten steps.
+        // As in Atlas: Home goes to the top, End to the bottom, Page Up and Page Down move ten steps
+        // from the step's grid.
         const auto homeEndPage = [&window] (juce::Component* slider, int pagesAfterwards)
         {
             slider->grabKeyboardFocus();
@@ -615,7 +620,7 @@ int main (int argc, char* argv[])
         };
 
         auto values = homeEndPage (speed, 1);
-        check (values == "4.00x, 4.00x, 0.25x, 0.35x", "Speed: Home, Home again, End, Page Up: " + values);
+        check (values == "4.00x, 4.00x, 0.25x, 1.20x", "Speed: Home, Home again, End, Page Up: " + values);
         typeInto (window, speed, "1");
 
         values = homeEndPage (threshold, 1);
@@ -633,7 +638,7 @@ int main (int argc, char* argv[])
         typeInto (window, release, "50");
 
         values = homeEndPage (cutoff, 1);
-        check (values == "20.0 kHz, 20.0 kHz, 20 Hz, 1.02 kHz", "Band Cutoff: " + values);
+        check (values == "20 kHz, 20 kHz, 20 Hz, 1 kHz", "Band Cutoff: " + values);
         typeInto (window, cutoff, "300");
 
         values = homeEndPage (firstPoint, 2);

@@ -1,8 +1,13 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <functional>
 
+// Keys, as in Atlas: the arrows move a normal step, Shift with an arrow a fine one,
+// Page Up and Page Down ten normal steps, Home the top and End the bottom,
+// Backspace or Delete back to the default, and Return opens the value box.
+// Steps are in the unit the value is shown in, and land on that step's grid.
 class AccessibleSlider final : public juce::Slider,
                                private juce::Label::Listener
 {
@@ -19,16 +24,12 @@ public:
             box->removeListener (this);
     }
 
-    void setKeyboardSteps (double normalStepIn, double fineStepIn)
+    // For a value shown in another unit than it is stored in, such as a gain shown in decibels.
+    void setDisplayUnit (std::function<double (double)> toUnitFunction,
+                         std::function<double (double)> fromUnitFunction)
     {
-        normalStep = normalStepIn;
-        fineStep = fineStepIn;
-        customStepFunction = nullptr;
-    }
-
-    void setCustomStepFunction (std::function<double (double, bool, int)> function)
-    {
-        customStepFunction = std::move (function);
+        toUnit = std::move (toUnitFunction);
+        fromUnit = std::move (fromUnitFunction);
     }
 
     bool keyPressed (const juce::KeyPress& key) override
@@ -62,6 +63,14 @@ public:
         if (keyCode == juce::KeyPress::homeKey || keyCode == juce::KeyPress::endKey)
         {
             stepBy (keyCode == juce::KeyPress::homeKey ? stepsPastEitherEnd : -stepsPastEitherEnd, false);
+            return true;
+        }
+
+        if ((keyCode == juce::KeyPress::backspaceKey || keyCode == juce::KeyPress::deleteKey)
+            && isDoubleClickReturnEnabled())
+        {
+            // The parameter attachment sets the double-click value to the parameter's default.
+            setValueAndAnnounce (getDoubleClickReturnValue());
             return true;
         }
 
@@ -111,15 +120,31 @@ private:
     // (Detector Release's top is its longest time, though the slider stores it lowest).
     static constexpr int stepsPastEitherEnd = 1000000;
 
-    void stepBy (int direction, bool fine)
+    double toShown (double value) const     { return toUnit != nullptr ? toUnit (value) : value; }
+    double fromShown (double value) const   { return fromUnit != nullptr ? fromUnit (value) : value; }
+
+    void stepBy (int steps, bool fine)
+    {
+        const auto step = fine ? fineStep : normalStep;
+        const auto bottom = toShown (getMinimum()), top = toShown (getMaximum());
+        const auto low = std::min (bottom, top), high = std::max (bottom, top);
+
+        // From the next line of the step's grid, so 1.05x goes up to 1.1x and down to 1.0x.
+        // A value within half a fine step of a line shows as on it, so it counts as on it:
+        // the default threshold of -26.02 dB, shown as -26.0 dB, goes up to -25.0 dB.
+        const auto tolerance = 0.5 * fineStep / step;
+        const auto lines = toShown (getValue()) / step;
+        const auto from = steps > 0 ? std::floor (lines + tolerance) : std::ceil (lines - tolerance);
+
+        setValueAndAnnounce (fromShown (juce::jlimit (low, high, (from + steps) * step)));
+    }
+
+    void setValueAndAnnounce (double newValue)
     {
         const juce::Slider::ScopedDragNotification gesture (*this);
         const auto previous = getValue();
 
-        if (customStepFunction != nullptr)
-            setValue (customStepFunction (getValue(), fine, direction), juce::sendNotificationSync);
-        else
-            setValue (getValue() + static_cast<double> (direction) * (fine ? fineStep : normalStep), juce::sendNotificationSync);
+        setValue (newValue, juce::sendNotificationSync);
 
         // A new value is announced by the slider itself; at either end nothing changes, so say it again.
         if (juce::exactlyEqual (getValue(), previous))
@@ -127,7 +152,7 @@ private:
                 handler->notifyAccessibilityEvent (juce::AccessibilityEvent::valueChanged);
     }
 
-    double normalStep = 0.01;
-    double fineStep = 0.001;
-    std::function<double (double, bool, int)> customStepFunction;
+    double normalStep;
+    double fineStep;
+    std::function<double (double)> toUnit, fromUnit;
 };

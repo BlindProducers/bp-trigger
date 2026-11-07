@@ -122,23 +122,29 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     ringmodEnabledButton.setTitle ("Ringmod Sidechain");
     ringmodEnabledButton.setExplicitFocusOrder (7);
 
-    configureSlider (speedSlider, speedLabel, "Speed", "x", 3);
-    configureSlider (rampDownSlider, rampDownLabel, "Ramp Down", " ms", 4);
-    configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape", "x", 5);
-    configureSlider (preduckSlider, preduckLabel, "Pre-duck", " ms", 9);
-    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", "dB", 10);
-    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", "releaseMs", 11);
-    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", "%", 8);
+    configureSlider (speedSlider, speedLabel, "Speed", 3);
+    configureSlider (rampDownSlider, rampDownLabel, "Ramp Down", 4);
+    configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape", 5);
+    configureSlider (preduckSlider, preduckLabel, "Pre-duck", 9);
+    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", 10);
+    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", 11);
+    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", 8);
     bandEnabledButton.setWantsKeyboardFocus (true);
     bandEnabledButton.setTitle ("Band");
     bandEnabledButton.setExplicitFocusOrder (13);
     highCurveEnabledButton.setWantsKeyboardFocus (true);
     highCurveEnabledButton.setTitle ("High Curve");
     highCurveEnabledButton.setExplicitFocusOrder (14);
-    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff", "Hz", 15);
-    configureSlider (depthSlider, depthLabel, "Depth", "%", 16);
-    configureSlider (highDepthSlider, highDepthLabel, "High Depth", "%", 17);
-    configureSlider (mixSlider, mixLabel, "Mix", "%", 18);
+    configureSlider (bandCutoffSlider, bandCutoffLabel, "Band Cutoff", 15);
+    configureSlider (depthSlider, depthLabel, "Depth", 16);
+    configureSlider (highDepthSlider, highDepthLabel, "High Depth", 17);
+    configureSlider (mixSlider, mixLabel, "Mix", 18);
+
+    // The arrows move these through the units they are shown in: decibels, and milliseconds of release.
+    thresholdSlider.setDisplayUnit ([] (double gain) { return (double) juce::Decibels::gainToDecibels ((float) gain); },
+                                    [] (double dB) { return (double) juce::Decibels::decibelsToGain ((float) dB); });
+    sensitivitySlider.setDisplayUnit (SidechainerAudioProcessor::detectorReleaseMsFromSensitivity,
+                                      SidechainerAudioProcessor::sensitivityFromDetectorReleaseMs);
 
     triggerModeAttachment = std::make_unique<ComboBoxAttachment> (parameters, "triggerMode", triggerModeBox);
     divisionAttachment = std::make_unique<ComboBoxAttachment> (parameters, "division", divisionBox);
@@ -196,99 +202,10 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
 void SidechainerAudioProcessorEditor::configureSlider (AccessibleSlider& slider,
                                                        juce::Label& label,
                                                        const juce::String& title,
-                                                       const juce::String& suffix,
                                                        int focusOrder)
 {
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 72, 22);
-
-    if (suffix == "%")
-    {
-        slider.setKeyboardSteps (0.01, 0.01);
-        slider.setTextValueSuffix ({});
-        slider.textFromValueFunction = [] (double value)
-        {
-            return juce::String (juce::roundToInt (value * 100.0)) + "%";
-        };
-        slider.valueFromTextFunction = [] (const juce::String& text)
-        {
-            return juce::jlimit (0.0, 1.0, text.retainCharacters ("0123456789.-").getDoubleValue() / 100.0);
-        };
-    }
-    else if (suffix == "dB")
-    {
-        slider.setTextValueSuffix ({});
-        slider.textFromValueFunction = [] (double value)
-        {
-            return juce::String (juce::Decibels::gainToDecibels (juce::jmax (0.000001, value)), 1) + " dB";
-        };
-        slider.valueFromTextFunction = [] (const juce::String& text)
-        {
-            const auto dB = juce::jlimit (-40.0, 0.0,
-                                          text.retainCharacters ("0123456789.-").getDoubleValue());
-            return juce::jlimit (0.01, 1.0, static_cast<double> (juce::Decibels::decibelsToGain (static_cast<float> (dB))));
-        };
-        slider.setCustomStepFunction ([] (double value, bool fine, int direction)
-        {
-            const auto step = fine ? 0.1 : 1.0;
-            const auto currentDb = juce::Decibels::gainToDecibels (juce::jmax (0.000001, value));
-            const auto nextDb = juce::jlimit (-40.0, 0.0, currentDb + static_cast<double> (direction) * step);
-            return juce::jlimit (0.01, 1.0, static_cast<double> (juce::Decibels::decibelsToGain (static_cast<float> (nextDb))));
-        });
-    }
-    else if (suffix == "releaseMs")
-    {
-        slider.setTextValueSuffix ({});
-        slider.textFromValueFunction = [] (double value)
-        {
-            const auto releaseMs = juce::jmap (juce::jlimit (0.0, 1.0, value), 100.0, 1.0);
-            return juce::String (juce::roundToInt (releaseMs)) + " ms";
-        };
-        slider.valueFromTextFunction = [] (const juce::String& text)
-        {
-            const auto releaseMs = juce::jlimit (1.0, 100.0,
-                                                 text.retainCharacters ("0123456789.-").getDoubleValue());
-            return juce::jlimit (0.0, 1.0, (100.0 - releaseMs) / 99.0);
-        };
-        slider.setCustomStepFunction ([] (double value, bool fine, int direction)
-        {
-            const auto step = fine ? 0.1 : 1.0;
-            const auto currentMs = juce::jmap (juce::jlimit (0.0, 1.0, value), 100.0, 1.0);
-            const auto nextMs = juce::jlimit (1.0, 100.0, currentMs + static_cast<double> (direction) * step);
-            return juce::jlimit (0.0, 1.0, (100.0 - nextMs) / 99.0);
-        });
-    }
-    else if (suffix == "Hz")
-    {
-        slider.setTextValueSuffix ({});
-        slider.textFromValueFunction = [] (double value)
-        {
-            if (value >= 1000.0)
-                return juce::String (value / 1000.0, value >= 10000.0 ? 1 : 2) + " kHz";
-
-            return juce::String (juce::roundToInt (value)) + " Hz";
-        };
-        slider.valueFromTextFunction = [] (const juce::String& text)
-        {
-            const auto lower = text.toLowerCase();
-            auto value = lower.retainCharacters ("0123456789.-").getDoubleValue();
-
-            if (lower.contains ("khz"))
-                value *= 1000.0;
-
-            return juce::jlimit (20.0, 20000.0, value);
-        };
-        slider.setCustomStepFunction ([] (double value, bool fine, int direction)
-        {
-            const auto step = fine ? 10.0 : 100.0;
-            return juce::jlimit (20.0, 20000.0, value + static_cast<double> (direction) * step);
-        });
-    }
-    else
-    {
-        // The parameter's text already ends in its unit ("1.00x", "0.0 ms").
-        slider.setTextValueSuffix ({});
-    }
 
     slider.setTitle (title);
     slider.setExplicitFocusOrder (focusOrder);

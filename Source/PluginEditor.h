@@ -37,7 +37,6 @@ private:
     void configureSlider (AccessibleSlider& slider,
                           juce::Label& label,
                           const juce::String& title,
-                          const juce::String& suffix,
                           int focusOrder);
 
     void configureCombo (juce::ComboBox& combo,
@@ -61,12 +60,13 @@ private:
     AccessibleToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
     AccessibleToggleButton bandEnabledButton { "Band" };
     AccessibleToggleButton highCurveEnabledButton { "High Curve" };
-    AccessibleSlider speedSlider { 0.01, 0.001 };
-    AccessibleSlider rampDownSlider { 0.1, 0.01 };
-    AccessibleSlider rampShapeSlider { 0.01, 0.001 };
-    AccessibleSlider preduckSlider { 0.1, 0.01 };
-    AccessibleSlider thresholdSlider { 0.01, 0.001 };
-    AccessibleSlider sensitivitySlider { 0.01, 0.001 };
+    // Normal and fine steps, in the unit each value is shown in; percentages step in fractions (0.01 is 1%).
+    AccessibleSlider speedSlider { 0.1, 0.01 };
+    AccessibleSlider rampDownSlider { 1.0, 0.1 };
+    AccessibleSlider rampShapeSlider { 0.1, 0.01 };
+    AccessibleSlider preduckSlider { 1.0, 0.1 };
+    AccessibleSlider thresholdSlider { 1.0, 0.1 };
+    AccessibleSlider sensitivitySlider { 1.0, 0.1 };
     AccessibleSlider ringmodIntensitySlider { 0.01, 0.001 };
     AccessibleSlider bandCutoffSlider { 100.0, 10.0 };
     AccessibleSlider depthSlider { 0.01, 0.001 };

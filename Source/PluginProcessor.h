@@ -44,6 +44,10 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static constexpr int curvePointCount = 16;
 
+    // Detector Release is stored as a 0 to 1 "sensitivity", highest for the shortest release.
+    static float detectorReleaseMsFromSensitivity (float sensitivity) noexcept;
+    static float sensitivityFromDetectorReleaseMs (float ms) noexcept;
+
 private:
     enum class TriggerMode { grid = 0, sidechain = 1, gridAndSidechain = 2 };
 
