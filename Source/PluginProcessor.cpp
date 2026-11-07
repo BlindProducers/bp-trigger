@@ -16,22 +16,26 @@ constexpr auto amplitudeModulationSmoothingMs = 10.0f;
 constexpr auto amplitudeModulationEnvelopeReleaseMs = 100.0f;
 constexpr auto modulationDcCutoffHz = 10.0;
 constexpr auto minimumThresholdDb = -40.0f;
+constexpr auto rearmThresholdRatio = 0.45f;     // a trigger re-arms once its detector falls this far below the threshold
+constexpr auto minRetriggerSeconds = 0.015;
 constexpr auto minimumDetectorReleaseMs = 1.0f;
 constexpr auto maximumDetectorReleaseMs = 100.0f;
 constexpr auto minimumBandCutoffHz = 20.0f;
 constexpr auto maximumBandCutoffHz = 20000.0f;
 
-juce::String curvePointId (int index)
-{
-    return "curvePoint" + juce::String (index).paddedLeft ('0', 2);
-}
+constexpr auto curvesTag = "Curves";
+constexpr auto editTriggerAttribute = "editTrigger";
+constexpr auto curveTags = std::array<const char*, 4> { "Trigger1", "Trigger1High", "Trigger2", "Trigger2High" };
 
-juce::String highCurvePointId (int index)
-{
-    return "highCurvePoint" + juce::String (index).paddedLeft ('0', 2);
-}
+// Before curves had points of their own, each was 16 parameters, "curvePoint00" to "curvePoint15".
+constexpr auto oldCurvePointCount = 16;
+constexpr auto oldCurvePointPrefixes = std::array<const char*, 2> { "curvePoint", "highCurvePoint" };
 
-std::unique_ptr<juce::RangedAudioParameter> makeFloatParam (const juce::String& id,
+const juce::StringArray sourceNames { "Sidechain", "Sidechain Left", "Sidechain Right",
+                                      "Sidechain 2", "Sidechain 2 Left", "Sidechain 2 Right" };
+const juce::StringArray divisionNames { "1 bar", "1/2", "1/2 triplet", "1/4", "1/4 triplet", "1/8", "1/8 triplet", "1/16" };
+
+std::unique_ptr<juce::RangedAudioParameter> makeFloatParam (const juce::ParameterID& id,
                                                             const juce::String& name,
                                                             float min,
                                                             float max,
@@ -61,8 +65,7 @@ std::unique_ptr<juce::RangedAudioParameter> makeFloatParam (const juce::String& 
     }
 
     return std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id, 1 }, name, range, defaultValue,
-        attributes);
+        id, name, range, defaultValue, attributes);
 }
 
 // A number with up to the given decimals, without trailing zeros: "50%", "50.5%".
@@ -86,14 +89,14 @@ float percentValueFromString (const juce::String& text)
     return juce::jlimit (0.0f, 1.0f, text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f);
 }
 
-std::unique_ptr<juce::RangedAudioParameter> makePercentParam (const juce::String& id,
+std::unique_ptr<juce::RangedAudioParameter> makePercentParam (const juce::ParameterID& id,
                                                               const juce::String& name,
                                                               float min,
                                                               float max,
                                                               float defaultValue)
 {
     return std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id, 1 }, name,
+        id, name,
         juce::NormalisableRange<float> (min, max, 0.001f),
         defaultValue,
         juce::AudioParameterFloatAttributes()
@@ -114,10 +117,10 @@ float thresholdValueFromString (const juce::String& text)
     return juce::jlimit (0.01f, 1.0f, juce::Decibels::decibelsToGain (dB));
 }
 
-std::unique_ptr<juce::RangedAudioParameter> makeThresholdParam()
+std::unique_ptr<juce::RangedAudioParameter> makeThresholdParam (const juce::ParameterID& id, const juce::String& name)
 {
     return std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "threshold", 1 }, "Sidechain Threshold",
+        id, name,
         juce::NormalisableRange<float> (0.01f, 1.0f),
         0.05f,
         juce::AudioParameterFloatAttributes()
@@ -138,10 +141,10 @@ float detectorReleaseValueFromString (const juce::String& text)
     return SidechainerAudioProcessor::sensitivityFromDetectorReleaseMs (ms);
 }
 
-std::unique_ptr<juce::RangedAudioParameter> makeDetectorReleaseParam()
+std::unique_ptr<juce::RangedAudioParameter> makeDetectorReleaseParam (const juce::ParameterID& id, const juce::String& name)
 {
     return std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "sensitivity", 1 }, "Detector Release",
+        id, name,
         juce::NormalisableRange<float> (0.0f, 1.0f),
         0.5f,
         juce::AudioParameterFloatAttributes()
@@ -185,6 +188,28 @@ std::unique_ptr<juce::RangedAudioParameter> makeBandCutoffParam()
 }
 }
 
+
+namespace
+{
+bool isSidechainLayout (const juce::AudioChannelSet& set)
+{
+    return set.isDisabled() || set == juce::AudioChannelSet::mono() || set == juce::AudioChannelSet::stereo();
+}
+}
+
+juce::AudioProcessor::BusesProperties SidechainerAudioProcessor::makeBusesProperties()
+{
+    auto buses = BusesProperties()
+                     .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                     .withInput ("Sidechain", juce::AudioChannelSet::stereo(), true);
+
+    // Audio Units hosts give an effect one sidechain.
+    if (juce::PluginHostType::getPluginLoadedAs() != juce::AudioProcessor::wrapperType_AudioUnit)
+        buses = buses.withInput ("Sidechain 2", juce::AudioChannelSet::stereo(), true);
+
+    return buses.withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+}
+
 float SidechainerAudioProcessor::detectorReleaseMsFromSensitivity (float sensitivity) noexcept
 {
     return juce::jmap (juce::jlimit (0.0f, 1.0f, sensitivity),
@@ -197,127 +222,142 @@ float SidechainerAudioProcessor::sensitivityFromDetectorReleaseMs (float ms) noe
                          (maximumDetectorReleaseMs - ms) / (maximumDetectorReleaseMs - minimumDetectorReleaseMs));
 }
 
+juce::String SidechainerAudioProcessor::triggerParameterId (int trigger, const juce::String& trigger1Id)
+{
+    if (trigger == 0)
+        return trigger1Id;
+
+    const auto name = trigger1Id == "triggerMode"     ? juce::String ("Mode")
+                    : trigger1Id == "sidechainSolo"   ? juce::String ("Solo")
+                                                      : trigger1Id.substring (0, 1).toUpperCase() + trigger1Id.substring (1);
+    return "trigger" + juce::String (trigger + 1) + name;
+}
+
+void SidechainerAudioProcessor::CurveTables::fill (const Curve& curve) noexcept
+{
+    for (auto& table : tables)
+        curve.fillTable (table);
+}
+
+void SidechainerAudioProcessor::CurveTables::publish (const Curve& curve) noexcept
+{
+    curve.fillTable (tables[(size_t) back]);
+    back = middle.exchange (back | fresh, std::memory_order_acq_rel) & ~fresh;
+}
+
+const Curve::Table& SidechainerAudioProcessor::CurveTables::acquire() noexcept
+{
+    if ((middle.load (std::memory_order_relaxed) & fresh) != 0)
+        front = middle.exchange (front, std::memory_order_acq_rel) & ~fresh;
+
+    return tables[(size_t) front];
+}
+
 SidechainerAudioProcessor::SidechainerAudioProcessor()
-    : AudioProcessor (BusesProperties()
-                          .withInput ("Input", juce::AudioChannelSet::stereo(), true)
-                          .withInput ("Sidechain", juce::AudioChannelSet::stereo(), true)
-                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (makeBusesProperties()),
       parameters (*this, nullptr, stateId, createParameterLayout())
 {
-    depthParam = parameters.getRawParameterValue ("depth");
-    highDepthParam = parameters.getRawParameterValue ("highDepth");
-    mixParam = parameters.getRawParameterValue ("mix");
-    modeParam = parameters.getRawParameterValue ("triggerMode");
-    divisionParam = parameters.getRawParameterValue ("division");
-    speedParam = parameters.getRawParameterValue ("speed");
+    for (int trigger = 0; trigger < triggerCount; ++trigger)
+    {
+        const auto raw = [this, trigger] (const char* id) { return parameters.getRawParameterValue (triggerParameterId (trigger, id)); };
+        auto& p = triggerParameters[(size_t) trigger];
+        p.mode = raw ("triggerMode");
+        p.division = raw ("division");
+        p.speed = raw ("speed");
+        p.source = raw ("source");
+        p.threshold = raw ("threshold");
+        p.sensitivity = raw ("sensitivity");
+        p.solo = raw ("sidechainSolo");
+        p.depth = raw ("depth");
+        p.highDepth = raw ("highDepth");
+        p.band = raw ("bandEnabled");
+        p.highCurve = raw ("highCurveEnabled");
+    }
+
     preduckParam = parameters.getRawParameterValue ("preduck");
     rampDownParam = parameters.getRawParameterValue ("rampDown");
     rampShapeParam = parameters.getRawParameterValue ("rampShape");
-    thresholdParam = parameters.getRawParameterValue ("threshold");
-    sensitivityParam = parameters.getRawParameterValue ("sensitivity");
-    sidechainSoloParam = parameters.getRawParameterValue ("sidechainSolo");
     ringmodEnabledParam = parameters.getRawParameterValue ("ringmodEnabled");
     ringmodIntensityParam = parameters.getRawParameterValue ("ringmodIntensity");
     ringmodDuckedParam = parameters.getRawParameterValue ("ringmodDucked");
     amplitudeModulationEnabledParam = parameters.getRawParameterValue ("amplitudeModulationEnabled");
     amplitudeModulationDepthParam = parameters.getRawParameterValue ("amplitudeModulationDepth");
-    bandEnabledParam = parameters.getRawParameterValue ("bandEnabled");
-    highCurveEnabledParam = parameters.getRawParameterValue ("highCurveEnabled");
     bandCutoffParam = parameters.getRawParameterValue ("bandCutoff");
+    mixParam = parameters.getRawParameterValue ("mix");
 
-    for (int i = 0; i < curvePointCount; ++i)
-        curvePoints[(size_t) i] = parameters.getRawParameterValue (curvePointId (i));
+    curves.fill (Curve::makeDefault());
+    for (auto& tables : curveTables)
+        tables.fill (curves.front());
 
-    for (int i = 0; i < curvePointCount; ++i)
-        highCurvePoints[(size_t) i] = parameters.getRawParameterValue (highCurvePointId (i));
-
-    for (auto id : { "triggerMode", "division", "speed", "preduck", "rampDown", "rampShape", "threshold", "sensitivity",
-                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "ringmodDucked",
-                     "amplitudeModulationEnabled", "amplitudeModulationDepth", "bandEnabled", "highCurveEnabled",
-                     "bandCutoff", "depth", "highDepth", "mix" })
-        parameters.addParameterListener (id, this);
-
+    // Pre-duck and Ramp Down set the latency; everything else is read at the start of each block.
+    parameters.addParameterListener ("preduck", this);
+    parameters.addParameterListener ("rampDown", this);
     refreshParameterCache();
 }
 
 SidechainerAudioProcessor::~SidechainerAudioProcessor()
 {
-    for (auto id : { "triggerMode", "division", "speed", "preduck", "rampDown", "rampShape", "threshold", "sensitivity",
-                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "ringmodDucked",
-                     "amplitudeModulationEnabled", "amplitudeModulationDepth", "bandEnabled", "highCurveEnabled",
-                     "bandCutoff", "depth", "highDepth", "mix" })
-        parameters.removeParameterListener (id, this);
+    parameters.removeParameterListener ("preduck", this);
+    parameters.removeParameterListener ("rampDown", this);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SidechainerAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    params.push_back (makePercentParam ("depth", "Depth", 0.0f, 1.0f, 1.0f));
-    params.push_back (makePercentParam ("highDepth", "High Depth", 0.0f, 1.0f, 1.0f));
-    params.push_back (makePercentParam ("mix", "Mix", 0.0f, 1.0f, 1.0f));
-    params.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { "triggerMode", 1 }, "Trigger Mode",
-        juce::StringArray { "Grid", "Sidechain", "Grid and Sidechain" }, 0));
-    params.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { "division", 1 }, "Grid Division",
-        juce::StringArray { "1 bar", "1/2", "1/2 triplet", "1/4", "1/4 triplet",
-                            "1/8", "1/8 triplet", "1/16" },
-        3));
-    params.push_back (makeFloatParam ("speed", "Speed", 0.25f, 4.0f, 1.0f, "x", 0.01f, 2));
-    params.push_back (makeFloatParam ("preduck", "Pre-duck", 0.0f, maxPreduckMs, 0.0f, "ms", 0.1f, 1));
-    params.push_back (makeFloatParam ("rampDown", "Ramp Down", 0.0f, maxRampDownMs, 0.0f, "ms", 0.1f, 1));
-    params.push_back (makeFloatParam ("rampShape", "Ramp Shape", 0.25f, 4.0f, 1.0f, "x", 0.01f, 2));
-    params.push_back (makeThresholdParam());
-    params.push_back (makeDetectorReleaseParam());
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "sidechainSolo", 1 }, "Sidechain Solo", false));
+    for (int trigger = 0; trigger < triggerCount; ++trigger)
+    {
+        // Trigger 2's parameters came in a later version than Trigger 1's.
+        const auto version = trigger == 0 ? 1 : 2;
+        const auto id = [trigger, version] (const char* trigger1Id) { return juce::ParameterID { triggerParameterId (trigger, trigger1Id), version }; };
+        const auto name = "Trigger " + juce::String (trigger + 1) + " ";
+        const auto modes = trigger == 0 ? juce::StringArray { "Grid", "Sidechain", "Grid and Sidechain" }
+                                        : juce::StringArray { "Off", "Grid", "Sidechain", "Grid and Sidechain" };
+
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (id ("triggerMode"), name + "Mode", modes, 0));
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (id ("division"), name + "Grid Division", divisionNames, 3));
+        params.push_back (makeFloatParam (id ("speed"), name + "Speed", 0.25f, 4.0f, 1.0f, "x", 0.01f, 2));
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { triggerParameterId (trigger, "source"), 2 },
+                                                                        name + "Source", sourceNames, trigger == 0 ? 0 : 3));
+        params.push_back (makeThresholdParam (id ("threshold"), name + "Threshold"));
+        params.push_back (makeDetectorReleaseParam (id ("sensitivity"), name + "Detector Release"));
+        params.push_back (std::make_unique<juce::AudioParameterBool> (id ("sidechainSolo"), name + "Sidechain Solo", false));
+        params.push_back (makePercentParam (id ("depth"), name + "Depth", 0.0f, 1.0f, 1.0f));
+        params.push_back (makePercentParam (id ("highDepth"), name + "High Depth", 0.0f, 1.0f, 1.0f));
+        params.push_back (std::make_unique<juce::AudioParameterBool> (id ("bandEnabled"), name + "Band", false));
+        params.push_back (std::make_unique<juce::AudioParameterBool> (id ("highCurveEnabled"), name + "High Curve", false));
+    }
+
+    params.push_back (makeFloatParam ({ "rampDown", 1 }, "Ramp Down", 0.0f, maxRampDownMs, 0.0f, "ms", 0.1f, 1));
+    params.push_back (makeFloatParam ({ "rampShape", 1 }, "Ramp Shape", 0.25f, 4.0f, 1.0f, "x", 0.01f, 2));
+    params.push_back (makeFloatParam ({ "preduck", 1 }, "Pre-duck", 0.0f, maxPreduckMs, 0.0f, "ms", 0.1f, 1));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "ringmodEnabled", 1 }, "Ringmod Sidechain", false));
-    params.push_back (makePercentParam ("ringmodIntensity", "Ringmod Intensity", 0.0f, 1.0f, 1.0f));
+    params.push_back (makePercentParam ({ "ringmodIntensity", 1 }, "Ringmod Intensity", 0.0f, 1.0f, 1.0f));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "ringmodDucked", 1 }, "Duck Ringmod", true));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "amplitudeModulationEnabled", 1 }, "Amplitude Modulation", false));
-    params.push_back (makePercentParam ("amplitudeModulationDepth", "Amplitude Modulation Depth", 0.0f, 1.0f, 1.0f));
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "bandEnabled", 1 }, "Band", false));
-    params.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "highCurveEnabled", 1 }, "High Curve", false));
+    params.push_back (makePercentParam ({ "amplitudeModulationDepth", 1 }, "Amplitude Modulation Depth", 0.0f, 1.0f, 1.0f));
     params.push_back (makeBandCutoffParam());
-
-    for (int i = 0; i < curvePointCount; ++i)
-    {
-        const auto position = static_cast<float> (i) / static_cast<float> (curvePointCount - 1);
-        const auto defaultValue = std::round (position * position * 100.0f) / 100.0f; // whole percents
-        params.push_back (makePercentParam (curvePointId (i), "Curve Point " + juce::String (i + 1),
-                                            0.0f, 1.0f, defaultValue));
-    }
-
-    for (int i = 0; i < curvePointCount; ++i)
-    {
-        const auto position = static_cast<float> (i) / static_cast<float> (curvePointCount - 1);
-        const auto defaultValue = std::round (position * position * 100.0f) / 100.0f; // whole percents
-        params.push_back (makePercentParam (highCurvePointId (i), "High Curve Point " + juce::String (i + 1),
-                                            0.0f, 1.0f, defaultValue));
-    }
+    params.push_back (makePercentParam ({ "mix", 1 }, "Mix", 0.0f, 1.0f, 1.0f));
 
     return { params.begin(), params.end() };
 }
 
 bool SidechainerAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    const auto mainIn = layouts.getMainInputChannelSet();
-    const auto mainOut = layouts.getMainOutputChannelSet();
-
-    // Keep the auxiliary sidechain on plugin pins 3/4 in REAPER.
-    // Mono or wider main input layouts move the sidechain bus to other pins.
-    if (mainIn != juce::AudioChannelSet::stereo()
-        || mainOut != juce::AudioChannelSet::stereo())
+    // Keep the sidechains on plugin pins 3/4 and 5/6 in REAPER.
+    // Mono or wider main input layouts move the sidechain buses to other pins.
+    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo()
+        || layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    const auto sidechain = layouts.getChannelSet (true, 1);
-    return sidechain.isDisabled() || sidechain == juce::AudioChannelSet::mono() || sidechain == juce::AudioChannelSet::stereo();
+    for (int bus = 1; bus < layouts.inputBuses.size(); ++bus)
+        if (! isSidechainLayout (layouts.getChannelSet (true, bus)))
+            return false;
+
+    return true;
 }
 
 void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -332,17 +372,15 @@ void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     sidechainDelay.clear();
     delayWritePosition = 0;
 
-    sidechainEnvelopePhase = 1.0f;
-    sidechainEnvelopeElapsedSamples = 1.0e12;
-    samplesSinceLastSidechainTrigger = sampleRate;
-    detectorEnvelope = 0.0f;
-    soloGateGain = 0.0f;
-    smoothedGain = 1.0f;
-    smoothedHighGain = 1.0f;
+    for (auto& state : triggerStates)
+    {
+        state = {};
+        state.samplesSinceTrigger = sampleRate;
+    }
+
     smoothedRingmodDepth = {};
     amplitudeModulationEnvelope = {};
     clockedProcessingBlend = 0.0f;
-    sidechainTriggerArmed = true;
     bandLowpassState.fill (0.0f);
     plainBandLowpassState.fill (0.0f);
     modulationDcState = {};
@@ -355,7 +393,6 @@ void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     modulationDcB1 = -(1.0 + std::cos (w0)) / a0;
     modulationDcA1 = -2.0 * std::cos (w0) / a0;
     modulationDcA2 = (1.0 - alpha) / a0;
-    freeRunningGridPhase = 0.0;
     refreshParameterCache();
     smoothedRingmodDucked = cachedRingmodDucked ? 1.0f : 0.0f;
     smoothedAmplitudeModulationDepth = cachedAmplitudeModulationEnabled ? cachedAmplitudeModulationDepth : 0.0f;
@@ -373,23 +410,65 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::ScopedNoDenormals noDenormals;
     refreshParameterCache();
 
-    const auto totalInputChannels = getTotalNumInputChannels();
     const auto totalOutputChannels = getTotalNumOutputChannels();
-    const auto mainChannels = getMainBusNumInputChannels();
-    const auto mainAudioChannels = juce::jmin (2, juce::jmin (mainChannels, totalOutputChannels));
-    const auto sidechainChannels = getChannelCountOfBus (true, 1);
+    const auto mainAudioChannels = juce::jmin (2, juce::jmin (getMainBusNumInputChannels(), totalOutputChannels));
     const auto numSamples = buffer.getNumSamples();
     const auto delaySize = mainDelay.getNumSamples();
 
-    for (auto ch = totalInputChannels; ch < totalOutputChannels; ++ch)
+    for (auto ch = getTotalNumInputChannels(); ch < totalOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
     if (delaySize <= 0)
         return;
 
-    const auto mainDelaySamples = juce::jlimit (0, maxLookaheadSamples, reportedLatencySamples);
-    const auto mode = static_cast<TriggerMode> (cachedMode);
-    const auto gridCycleBeats = static_cast<double> (getDivisionBeats());
+    // Sidechain and Sidechain 2: each one's left and right channel, the one channel twice for a mono bus.
+    // REAPER passes them in on plugin pins 3/4 and 5/6.
+    struct SidechainBus
+    {
+        const float* left = nullptr;
+        const float* right = nullptr;
+    };
+
+    std::array<SidechainBus, 2> sidechainBuses {};
+
+    for (int i = 0; i < 2; ++i)
+    {
+        const auto* bus = getBus (true, i + 1);
+
+        if (bus == nullptr || ! bus->isEnabled() || bus->getNumberOfChannels() == 0)
+            continue;
+
+        const auto first = bus->getChannelIndexInProcessBlockBuffer (0);
+
+        if (first < buffer.getNumChannels())
+        {
+            auto& channels = sidechainBuses[(size_t) i];
+            channels.left = buffer.getReadPointer (first);
+            channels.right = bus->getNumberOfChannels() > 1 && first + 1 < buffer.getNumChannels() ? buffer.getReadPointer (first + 1)
+                                                                                                  : channels.left;
+        }
+    }
+
+    // Sources are numbered as their parameter lists them: the bus, then its left, then its right.
+    const auto readSource = [&sidechainBuses] (int source, int sample) noexcept -> SourceSample
+    {
+        const auto& bus = sidechainBuses[(size_t) juce::jlimit (0, 1, source / 3)];
+
+        if (bus.left == nullptr)
+            return {};
+
+        const auto left = bus.left[sample];
+        const auto right = bus.right[sample];
+
+        switch (source % 3)
+        {
+            case 1:  return { std::abs (left), left, left };
+            case 2:  return { std::abs (right), right, right };
+            default: return { 0.5f * (std::abs (left) + std::abs (right)), left, right };
+        }
+    };
+
+    const auto mainDelaySamples = juce::jlimit (0, maxLookaheadSamples, reportedLatencySamples.load());
     const auto gainSmoothingCoeff = std::exp (-1.0f / static_cast<float> (0.001 * gainSmoothingMs * currentSampleRate));
     const auto transportSmoothingCoeff = std::exp (-1.0f / static_cast<float> (0.001 * transportSmoothingMs * currentSampleRate));
     const auto ringmodSmoothingMs = cachedRingmodEnabled
@@ -398,7 +477,6 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                        juce::jmax (cachedRampDownMs, cachedPreduckMs))
                                         : minimumRingmodSmoothingMs;
     const auto ringmodSmoothingCoeff = std::exp (-1.0f / static_cast<float> (0.001 * ringmodSmoothingMs * currentSampleRate));
-    const auto releaseCoeff = std::exp (-1.0f / static_cast<float> (0.001 * detectorReleaseMsFromSensitivity (cachedSensitivity) * currentSampleRate));
     const auto soloGateAttackCoeff = std::exp (-1.0f / static_cast<float> (0.001 * soloGateAttackMs * currentSampleRate));
     const auto amplitudeModulationSmoothingCoeff = std::exp (-1.0f / static_cast<float> (0.001 * amplitudeModulationSmoothingMs * currentSampleRate));
     const auto amplitudeModulationReleaseCoeff = std::exp (-1.0f / static_cast<float> (0.001 * amplitudeModulationEnvelopeReleaseMs * currentSampleRate));
@@ -427,140 +505,177 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
     }
 
-    const auto bypassClockedProcessing = transportIsExplicitlyStopped
-                                         && (mode == TriggerMode::grid || mode == TriggerMode::gridAndSidechain);
-    const auto gridCycleSamples = juce::jmax (1.0, gridCycleBeats * 60.0 / bpm * currentSampleRate);
-    const auto rampDownSamples = juce::jmin (gridCycleSamples * 0.5,
-                                             juce::jmax (0.0, static_cast<double> (cachedRampDownMs) * currentSampleRate / 1000.0));
+    // What each trigger needs for this block. A trigger that follows the grid rests while the transport is stopped.
+    struct TriggerBlock
+    {
+        const Curve::Table* curve = nullptr;
+        const Curve::Table* highCurve = nullptr;
+        double cycleBeats = 1.0, cycleSamples = 1.0, rampSamples = 0.0;
+        float releaseCoeff = 0.0f;
+        bool followsGrid = false, resting = false;
+    };
+
+    std::array<TriggerBlock, triggerCount> blocks {};
+    auto anySidechainOnly = false, anyRunning = false, anySolo = false, bandSplit = false;
+
+    for (int trigger = 0; trigger < triggerCount; ++trigger)
+    {
+        const auto& settings = cachedTriggers[(size_t) trigger];
+        auto& block = blocks[(size_t) trigger];
+        block.curve = &curveTables[(size_t) curveSlot (trigger, false)].acquire();
+        block.highCurve = &curveTables[(size_t) curveSlot (trigger, true)].acquire();
+        block.cycleBeats = getDivisionBeats (settings.division);
+        block.cycleSamples = juce::jmax (1.0, block.cycleBeats * 60.0 / bpm * currentSampleRate);
+        block.rampSamples = juce::jmin (block.cycleSamples * 0.5,
+                                        juce::jmax (0.0, static_cast<double> (cachedRampDownMs) * currentSampleRate / 1000.0));
+        block.releaseCoeff = std::exp (-1.0f / static_cast<float> (0.001 * detectorReleaseMsFromSensitivity (settings.sensitivity) * currentSampleRate));
+        block.followsGrid = settings.mode == TriggerMode::grid || settings.mode == TriggerMode::gridAndSidechain;
+        block.resting = transportIsExplicitlyStopped && block.followsGrid;
+
+        anySidechainOnly = anySidechainOnly || settings.mode == TriggerMode::sidechain;
+        anyRunning = anyRunning || (settings.mode != TriggerMode::off && ! block.resting);
+        anySolo = anySolo || (settings.mode != TriggerMode::off && settings.solo);
+        bandSplit = bandSplit || (settings.mode != TriggerMode::off && settings.band);
+    }
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
         for (int ch = 0; ch < mainAudioChannels; ++ch)
             mainDelay.setSample (ch, delayWritePosition, buffer.getSample (ch, sample));
 
-        sidechainDelay.setSample (0, delayWritePosition, 0.0f);
-        sidechainDelay.setSample (1, delayWritePosition, 0.0f);
+        // Where both triggers duck, the deeper duck wins, in each band.
+        auto gain = 1.0f, highGain = 1.0f;
+        auto soloLeft = 0.0f, soloRight = 0.0f;
+        SourceSample trigger1Source;
 
-        float sidechainLevel = 0.0f;
-        int sidechainSources = 0;
-
-        // REAPER exposes this stereo sidechain bus as plugin input channels 3/4.
-        auto addSidechainBus = [&]
+        for (int trigger = 0; trigger < triggerCount; ++trigger)
         {
-            auto added = false;
+            const auto& settings = cachedTriggers[(size_t) trigger];
+            const auto& block = blocks[(size_t) trigger];
+            auto& state = triggerStates[(size_t) trigger];
 
-            for (int ch = 0; ch < juce::jmin (2, sidechainChannels); ++ch)
+            if (settings.mode == TriggerMode::off)
             {
-                const auto sourceChannel = mainChannels + ch;
-                if (sourceChannel < totalInputChannels)
+                // At rest, so it starts afresh when it's turned on.
+                state.detectorEnvelope = 0.0f;
+                state.soloGateGain = 0.0f;
+                state.armed = true;
+                state.elapsedSamples = 1.0e12;
+                state.smoothedGain = 1.0f + gainSmoothingCoeff * (state.smoothedGain - 1.0f);
+                state.smoothedHighGain = 1.0f + gainSmoothingCoeff * (state.smoothedHighGain - 1.0f);
+                gain = std::min (gain, state.smoothedGain);
+                highGain = std::min (highGain, state.smoothedHighGain);
+                continue;
+            }
+
+            const auto source = readSource (settings.source, sample);
+
+            if (trigger == 0)
+                trigger1Source = source;
+
+            state.detectorEnvelope = source.level > state.detectorEnvelope
+                                         ? source.level
+                                         : block.releaseCoeff * state.detectorEnvelope + (1.0f - block.releaseCoeff) * source.level;
+
+            // Sidechain Solo plays the source while the detector is over the threshold. It fades in over
+            // a millisecond and out at the Detector Release time, so its edges do not click.
+            const auto soloGateTarget = state.detectorEnvelope >= settings.threshold ? 1.0f : 0.0f;
+            const auto soloGateCoeff = soloGateTarget > state.soloGateGain ? soloGateAttackCoeff : block.releaseCoeff;
+            state.soloGateGain = soloGateTarget + soloGateCoeff * (state.soloGateGain - soloGateTarget);
+
+            if (settings.solo)
+            {
+                soloLeft += state.soloGateGain * source.left;
+                soloRight += state.soloGateGain * source.right;
+            }
+
+            if (block.resting)
+            {
+                state.elapsedSamples = 1.0e12;
+                state.armed = true;
+                state.samplesSinceTrigger = currentSampleRate;
+            }
+            else if (settings.mode != TriggerMode::grid)
+            {
+                if (state.armed
+                    && state.detectorEnvelope >= settings.threshold
+                    && state.samplesSinceTrigger > currentSampleRate * minRetriggerSeconds)
                 {
-                    const auto existing = sidechainDelay.getSample (ch, delayWritePosition);
-                    sidechainDelay.setSample (ch, delayWritePosition, existing + buffer.getSample (sourceChannel, sample));
-                    added = true;
+                    state.elapsedSamples = 0.0;
+                    state.samplesSinceTrigger = 0.0;
+                    state.armed = false;
+                }
+                else if (! state.armed && state.detectorEnvelope <= settings.threshold * rearmThresholdRatio)
+                {
+                    state.armed = true;
                 }
             }
 
-            if (added)
-                sidechainSources = juce::jmax (sidechainSources, juce::jmin (2, sidechainChannels));
-        };
+            state.samplesSinceTrigger += 1.0;
 
-        addSidechainBus();
+            auto phase = 1.0f;
 
-        const auto sidechainReadPos = delayWritePosition;
-        for (int ch = 0; ch < juce::jmax (1, sidechainSources); ++ch)
-            sidechainLevel += std::abs (sidechainDelay.getSample (ch, sidechainReadPos));
-
-        sidechainLevel /= static_cast<float> (juce::jmax (1, sidechainSources));
-        const auto sidechainMonitorLeft = sidechainDelay.getSample (0, sidechainReadPos);
-        const auto sidechainMonitorRight = sidechainSources == 1 ? sidechainMonitorLeft
-                                                                 : sidechainDelay.getSample (1, sidechainReadPos);
-
-        detectorEnvelope = sidechainLevel > detectorEnvelope
-                               ? sidechainLevel
-                               : releaseCoeff * detectorEnvelope + (1.0f - releaseCoeff) * sidechainLevel;
-
-        // Sidechain Solo plays the sidechain while the detector is over the threshold. It fades in over
-        // a millisecond and out at the Detector Release time, so its edges do not click.
-        const auto soloGateTarget = detectorEnvelope >= cachedThreshold ? 1.0f : 0.0f;
-        const auto soloGateCoeff = soloGateTarget > soloGateGain ? soloGateAttackCoeff : releaseCoeff;
-        soloGateGain = soloGateTarget + soloGateCoeff * (soloGateGain - soloGateTarget);
-
-        if (bypassClockedProcessing)
-        {
-            sidechainEnvelopePhase = 1.0f;
-            sidechainEnvelopeElapsedSamples = 1.0e12;
-            sidechainTriggerArmed = true;
-            samplesSinceLastSidechainTrigger = currentSampleRate;
-        }
-        else if (mode != TriggerMode::grid)
-        {
-            const auto resetThreshold = cachedThreshold * 0.45f;
-            const auto minRetriggerSamples = currentSampleRate * 0.015;
-
-            if (sidechainTriggerArmed
-                && detectorEnvelope >= cachedThreshold
-                && samplesSinceLastSidechainTrigger > minRetriggerSamples)
+            if (! block.resting && block.followsGrid)
             {
-                triggerSidechainEnvelope();
-                sidechainTriggerArmed = false;
+                auto gridPosition = state.freeRunningGridPhase;
+
+                if (blockStartPpq.has_value())
+                {
+                    const auto ppq = *blockStartPpq + (static_cast<double> (sample) * bpm / (60.0 * currentSampleRate));
+                    gridPosition = std::fmod (ppq, block.cycleBeats) / block.cycleBeats;
+                }
+
+                phase = getPhaseFromElapsedSamples (gridPosition * block.cycleSamples, block.cycleSamples, block.rampSamples, settings.speed);
             }
-            else if (! sidechainTriggerArmed && detectorEnvelope <= resetThreshold)
-            {
-                sidechainTriggerArmed = true;
-            }
-        }
 
-        samplesSinceLastSidechainTrigger += 1.0;
+            const auto sidechainPhase = getPhaseFromElapsedSamples (state.elapsedSamples, block.cycleSamples, block.rampSamples, settings.speed);
 
-        float phase = 1.0f;
-        if (! bypassClockedProcessing && (mode == TriggerMode::grid || mode == TriggerMode::gridAndSidechain))
-        {
-            if (blockStartPpq.has_value() && gridCycleBeats > 0.0)
+            if (! block.resting
+                && (settings.mode == TriggerMode::sidechain || (settings.mode == TriggerMode::gridAndSidechain && sidechainPhase < phase)))
+                phase = sidechainPhase;
+
+            const auto targetGain = block.resting ? 1.0f
+                                                  : getGainForPhase (phase, getCurveValue (phase, *block.curve), settings.depth);
+            // Without Band a trigger ducks the high band as the low; with Band it leaves the high band alone,
+            // or ducks it with its High Curve.
+            const auto targetHighGain = ! settings.band          ? targetGain
+                                      : block.resting || ! settings.highCurve ? 1.0f
+                                      : getGainForPhase (phase, getCurveValue (phase, *block.highCurve), settings.highDepth);
+            const auto smoothingCoeff = block.resting ? transportSmoothingCoeff : gainSmoothingCoeff;
+            state.smoothedGain = targetGain + smoothingCoeff * (state.smoothedGain - targetGain);
+            state.smoothedHighGain = targetHighGain + smoothingCoeff * (state.smoothedHighGain - targetHighGain);
+            gain = std::min (gain, state.smoothedGain);
+            highGain = std::min (highGain, state.smoothedHighGain);
+
+            if (block.resting)
             {
-                const auto ppq = *blockStartPpq + (static_cast<double> (sample) * bpm / (60.0 * currentSampleRate));
-                const auto gridPosition = std::fmod (ppq, gridCycleBeats) / gridCycleBeats;
-                phase = getPhaseFromElapsedSamples (gridPosition * gridCycleSamples, gridCycleSamples, rampDownSamples);
+                state.freeRunningGridPhase = 0.0;
             }
             else
             {
-                phase = getPhaseFromElapsedSamples (freeRunningGridPhase * gridCycleSamples, gridCycleSamples, rampDownSamples);
+                state.elapsedSamples += 1.0;
+                state.freeRunningGridPhase += 1.0 / block.cycleSamples;
+
+                while (state.freeRunningGridPhase >= 1.0)
+                    state.freeRunningGridPhase -= 1.0;
             }
         }
 
-        sidechainEnvelopePhase = getPhaseFromElapsedSamples (sidechainEnvelopeElapsedSamples, gridCycleSamples, rampDownSamples);
-
-        if (! bypassClockedProcessing
-            && (mode == TriggerMode::sidechain || (mode == TriggerMode::gridAndSidechain && sidechainEnvelopePhase < phase)))
-            phase = sidechainEnvelopePhase;
-
-        const auto curve = getCurveValue (phase, curvePoints);
-        const auto highCurve = getCurveValue (phase, highCurvePoints);
-        const auto targetGain = bypassClockedProcessing
-                                    ? 1.0f
-                                    : getGainForPhase (phase, curve, cachedDepth);
-        const auto targetHighGain = ! bypassClockedProcessing && cachedBandEnabled && cachedHighCurveEnabled
-                                        ? getGainForPhase (phase, highCurve, cachedHighDepth)
-                                        : 1.0f;
-        const auto envelopeSmoothingCoeff = bypassClockedProcessing ? transportSmoothingCoeff : gainSmoothingCoeff;
-        smoothedGain = targetGain + envelopeSmoothingCoeff * (smoothedGain - targetGain);
-        smoothedHighGain = targetHighGain + envelopeSmoothingCoeff * (smoothedHighGain - targetHighGain);
-
-        if (mode == TriggerMode::sidechain)
-        {
+        // A trigger in Sidechain mode works with the transport stopped; the grid modes fade out and back in with it.
+        if (anySidechainOnly)
             clockedProcessingBlend = 1.0f;
-        }
         else
-        {
-            clockedProcessingBlend = bypassClockedProcessing
-                                         ? juce::jmax (0.0f, clockedProcessingBlend - transportBlendStep)
-                                         : juce::jmin (1.0f, clockedProcessingBlend + transportBlendStep);
-        }
-        const auto readPos = (delayWritePosition + delaySize - mainDelaySamples) % delaySize;
+            clockedProcessingBlend = anyRunning ? juce::jmin (1.0f, clockedProcessingBlend + transportBlendStep)
+                                                : juce::jmax (0.0f, clockedProcessingBlend - transportBlendStep);
 
-        // The ringmod and amplitude modulation read the sidechain with the main audio's delay, so a hit
-        // modulates the main audio where it sits in the host's timeline, not Pre-duck plus Ramp Down earlier.
+        // The ringmod and amplitude modulation follow Trigger 1's source. They read it with the main audio's delay,
+        // so a hit modulates the main audio where it sits in the host's timeline, not Pre-duck plus Ramp Down earlier.
+        sidechainDelay.setSample (0, delayWritePosition, trigger1Source.left);
+        sidechainDelay.setSample (1, delayWritePosition, trigger1Source.right);
+
+        const auto readPos = (delayWritePosition + delaySize - mainDelaySamples) % delaySize;
         const auto delayedSidechainLeft = sidechainDelay.getSample (0, readPos);
-        const auto delayedSidechainRight = sidechainSources == 1 ? delayedSidechainLeft : sidechainDelay.getSample (1, readPos);
+        const auto delayedSidechainRight = sidechainDelay.getSample (1, readPos);
 
         // Each channel's envelope jumps to the sidechain's peaks and falls between them, so it never sits
         // below the sidechain's level.
@@ -573,90 +688,76 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         for (int ch = 0; ch < totalOutputChannels; ++ch)
         {
-            if (cachedSidechainSolo)
+            if (anySolo)
             {
-                const auto monitor = totalOutputChannels == 1 ? 0.5f * (sidechainMonitorLeft + sidechainMonitorRight)
-                                                              : (ch == 0 ? sidechainMonitorLeft : sidechainMonitorRight);
-                buffer.setSample (ch, sample, soloGateGain * monitor);
+                const auto monitor = totalOutputChannels == 1 ? 0.5f * (soloLeft + soloRight) : (ch == 0 ? soloLeft : soloRight);
+                buffer.setSample (ch, sample, monitor);
+                continue;
+            }
+
+            const auto sourceChannel = juce::jmin (ch, mainAudioChannels - 1);
+            const auto dry = mainDelay.getSample (sourceChannel, readPos);
+            const auto ringSidechain = totalOutputChannels == 1 ? 0.5f * (delayedSidechainLeft + delayedSidechainRight)
+                                                                : (ch == 0 ? delayedSidechainLeft : delayedSidechainRight);
+            const auto targetRingDepth = cachedRingmodEnabled ? cachedRingmodIntensity : 0.0f;
+            auto& ringDepth = smoothedRingmodDepth[(size_t) sourceChannel];
+            ringDepth = targetRingDepth + ringmodSmoothingCoeff * (ringDepth - targetRingDepth);
+            const auto ringAmount = ringDepth * std::abs (ringSidechain) * ringmodFullScaleDrive;
+            const auto shapedInput = dry * (1.0f - smoothedRingmodDucked * ringAmount);
+            auto wet = shapedInput * gain;
+
+            if (bandSplit)
+            {
+                auto& lowpassState = bandLowpassState[(size_t) sourceChannel];
+                lowpassState += bandCoeff * (shapedInput - lowpassState);
+
+                const auto lowBand = lowpassState;
+                const auto highBand = shapedInput - lowBand;
+                wet = highBand * highGain + lowBand * gain;
             }
             else
             {
-                const auto sourceChannel = juce::jmin (ch, mainAudioChannels - 1);
-                const auto dry = mainDelay.getSample (sourceChannel, readPos);
-                const auto ringSidechain = totalOutputChannels == 1 ? 0.5f * (delayedSidechainLeft + delayedSidechainRight)
-                                                                    : (ch == 0 ? delayedSidechainLeft : delayedSidechainRight);
-                const auto targetRingDepth = cachedRingmodEnabled ? cachedRingmodIntensity : 0.0f;
-                auto& ringDepth = smoothedRingmodDepth[(size_t) sourceChannel];
-                ringDepth = targetRingDepth + ringmodSmoothingCoeff * (ringDepth - targetRingDepth);
-                const auto ringAmount = ringDepth * std::abs (ringSidechain) * ringmodFullScaleDrive;
-                const auto shapedInput = dry * (1.0f - smoothedRingmodDucked * ringAmount);
-                auto wet = shapedInput * smoothedGain;
-
-                if (cachedBandEnabled)
-                {
-                    auto& lowpassState = bandLowpassState[(size_t) sourceChannel];
-                    lowpassState += bandCoeff * (shapedInput - lowpassState);
-
-                    const auto lowBand = lowpassState;
-                    const auto highBand = shapedInput - lowBand;
-                    wet = highBand * smoothedHighGain + lowBand * smoothedGain;
-                }
-                else
-                {
-                    bandLowpassState[(size_t) sourceChannel] = shapedInput;
-                }
-
-                // With Duck Ringmod off, the ringmod is added after the duck, so it plays through it.
-                // Capping its amount at 1 + gain keeps the output within the dry level.
-                wet -= (1.0f - smoothedRingmodDucked) * dry * std::min (ringAmount, 1.0f + smoothedGain);
-
-                // Amplitude modulation follows the sidechain's waveform: full level at its peaks, down by
-                // Depth times its envelope at its troughs, and full level again when it stops.
-                const auto envelope = totalOutputChannels == 1 ? std::max (amplitudeModulationEnvelope[0], amplitudeModulationEnvelope[1])
-                                                               : amplitudeModulationEnvelope[(size_t) juce::jmin (ch, 1)];
-                wet *= juce::jlimit (0.0f, 1.0f, 1.0f - smoothedAmplitudeModulationDepth * 0.5f * (envelope - ringSidechain));
-
-                // The ringmod and amplitude modulation turn main audio at the sidechain's frequencies into DC and
-                // sub-bass. What they add goes through a 10 Hz high-pass; the main audio itself is not filtered.
-                const auto channel = (size_t) sourceChannel;
-                if (ringDepth > 0.0f || smoothedAmplitudeModulationDepth > 0.0f)
-                {
-                    auto plainWet = dry * smoothedGain;
-                    auto& plainLowpass = plainBandLowpassState[channel];
-
-                    if (cachedBandEnabled)
-                    {
-                        plainLowpass += bandCoeff * (dry - plainLowpass);
-                        plainWet = (dry - plainLowpass) * smoothedHighGain + plainLowpass * smoothedGain;
-                    }
-                    else
-                    {
-                        plainLowpass = dry;
-                    }
-
-                    wet = plainWet + static_cast<float> (blockModulationDc (wet - plainWet, channel));
-                }
-                else
-                {
-                    // Nothing is added, so the plain band split is the band split, and the high-pass is at rest.
-                    plainBandLowpassState[channel] = bandLowpassState[channel];
-                    modulationDcState[channel] = {};
-                }
-
-                buffer.setSample (ch, sample, dry + cachedMix * clockedProcessingBlend * (wet - dry));
+                bandLowpassState[(size_t) sourceChannel] = shapedInput;
             }
-        }
 
-        if (bypassClockedProcessing)
-        {
-            freeRunningGridPhase = 0.0;
-        }
-        else
-        {
-            sidechainEnvelopeElapsedSamples += 1.0;
-            freeRunningGridPhase += 1.0 / juce::jmax (1.0, gridCycleBeats * 60.0 / bpm * currentSampleRate);
-            while (freeRunningGridPhase >= 1.0)
-                freeRunningGridPhase -= 1.0;
+            // With Duck Ringmod off, the ringmod is added after the duck, so it plays through it.
+            // Capping its amount at 1 + gain keeps the output within the dry level.
+            wet -= (1.0f - smoothedRingmodDucked) * dry * std::min (ringAmount, 1.0f + gain);
+
+            // Amplitude modulation follows the sidechain's waveform: full level at its peaks, down by
+            // Depth times its envelope at its troughs, and full level again when it stops.
+            const auto envelope = totalOutputChannels == 1 ? std::max (amplitudeModulationEnvelope[0], amplitudeModulationEnvelope[1])
+                                                           : amplitudeModulationEnvelope[(size_t) juce::jmin (ch, 1)];
+            wet *= juce::jlimit (0.0f, 1.0f, 1.0f - smoothedAmplitudeModulationDepth * 0.5f * (envelope - ringSidechain));
+
+            // The ringmod and amplitude modulation turn main audio at the sidechain's frequencies into DC and
+            // sub-bass. What they add goes through a 10 Hz high-pass; the main audio itself is not filtered.
+            const auto channel = (size_t) sourceChannel;
+            if (ringDepth > 0.0f || smoothedAmplitudeModulationDepth > 0.0f)
+            {
+                auto plainWet = dry * gain;
+                auto& plainLowpass = plainBandLowpassState[channel];
+
+                if (bandSplit)
+                {
+                    plainLowpass += bandCoeff * (dry - plainLowpass);
+                    plainWet = (dry - plainLowpass) * highGain + plainLowpass * gain;
+                }
+                else
+                {
+                    plainLowpass = dry;
+                }
+
+                wet = plainWet + static_cast<float> (blockModulationDc (wet - plainWet, channel));
+            }
+            else
+            {
+                // Nothing is added, so the plain band split is the band split, and the high-pass is at rest.
+                plainBandLowpassState[channel] = bandLowpassState[channel];
+                modulationDcState[channel] = {};
+            }
+
+            buffer.setSample (ch, sample, dry + cachedMix * clockedProcessingBlend * (wet - dry));
         }
 
         delayWritePosition = (delayWritePosition + 1) % delaySize;
@@ -672,28 +773,18 @@ double SidechainerAudioProcessor::blockModulationDc (double input, size_t channe
     return output;
 }
 
-void SidechainerAudioProcessor::triggerSidechainEnvelope() noexcept
+float SidechainerAudioProcessor::getCurveValue (float phase, const Curve::Table& table) noexcept
 {
-    sidechainEnvelopeElapsedSamples = 0.0;
-    sidechainEnvelopePhase = cachedRampDownMs > 0.0f ? -1.0f : 0.0f;
-    samplesSinceLastSidechainTrigger = 0.0;
-}
-
-float SidechainerAudioProcessor::getCurveValue (float phase,
-                                                const std::array<std::atomic<float>*, curvePointCount>& points) const noexcept
-{
-    phase = juce::jlimit (0.0f, 1.0f, phase);
-    const auto scaled = phase * static_cast<float> (curvePointCount - 1);
-    const auto index = juce::jlimit (0, curvePointCount - 2, static_cast<int> (scaled));
-    const auto frac = scaled - static_cast<float> (index);
-    const auto a = points[(size_t) index]->load();
-    const auto b = points[(size_t) index + 1]->load();
-    return juce::jlimit (0.0f, 1.0f, a + (b - a) * frac);
+    const auto position = juce::jlimit (0.0f, 1.0f, phase) * static_cast<float> (Curve::tableSize);
+    const auto index = juce::jmin (Curve::tableSize - 1, static_cast<int> (position));
+    const auto a = table[(size_t) index];
+    return a + (position - static_cast<float> (index)) * (table[(size_t) index + 1] - a);
 }
 
 float SidechainerAudioProcessor::getPhaseFromElapsedSamples (double elapsedSamples,
                                                              double cycleSamples,
-                                                             double rampSamples) const noexcept
+                                                             double rampSamples,
+                                                             float speed) const noexcept
 {
     cycleSamples = juce::jmax (1.0, cycleSamples);
     rampSamples = juce::jlimit (0.0, cycleSamples * 0.5, rampSamples);
@@ -705,18 +796,11 @@ float SidechainerAudioProcessor::getPhaseFromElapsedSamples (double elapsedSampl
     }
 
     const auto curveElapsed = juce::jmax (0.0, elapsedSamples - rampSamples);
-    return static_cast<float> (juce::jlimit (0.0, 1.0,
-                                             curveElapsed * static_cast<double> (cachedSpeed) / cycleSamples));
+    return static_cast<float> (juce::jlimit (0.0, 1.0, curveElapsed * static_cast<double> (speed) / cycleSamples));
 }
 
-float SidechainerAudioProcessor::getGainForPhase (float phase,
-                                                  float curveValue,
-                                                  float depth,
-                                                  bool curveEnabled) const noexcept
+float SidechainerAudioProcessor::getGainForPhase (float phase, float curveValue, float depth) const noexcept
 {
-    if (! curveEnabled)
-        return 1.0f;
-
     const auto curveGain = juce::jlimit (0.0f, 1.5f, 1.0f - depth * (1.0f - curveValue));
 
     if (phase >= 0.0f)
@@ -727,75 +811,168 @@ float SidechainerAudioProcessor::getGainForPhase (float phase,
     return juce::jlimit (0.0f, 1.5f, 1.0f + shapedProgress * (curveGain - 1.0f));
 }
 
-float SidechainerAudioProcessor::getDivisionBeats() const noexcept
+double SidechainerAudioProcessor::getDivisionBeats (int division) noexcept
 {
-    switch (cachedDivision)
+    switch (division)
     {
-        case 0: return 4.0f;
-        case 1: return 2.0f;
-        case 2: return 4.0f / 3.0f;
-        case 3: return 1.0f;
-        case 4: return 2.0f / 3.0f;
-        case 5: return 0.5f;
-        case 6: return 1.0f / 3.0f;
-        case 7: return 0.25f;
-        default: return 1.0f;
+        case 0: return 4.0;
+        case 1: return 2.0;
+        case 2: return 4.0 / 3.0;
+        case 3: return 1.0;
+        case 4: return 2.0 / 3.0;
+        case 5: return 0.5;
+        case 6: return 1.0 / 3.0;
+        case 7: return 0.25;
+        default: return 1.0;
     }
 }
 
 void SidechainerAudioProcessor::parameterChanged (const juce::String&, float)
 {
-    refreshParameterCache();
+    updateLatencyForPreduck();
 }
 
 void SidechainerAudioProcessor::refreshParameterCache()
 {
-    cachedDepth = depthParam->load();
-    cachedHighDepth = highDepthParam->load();
+    for (int trigger = 0; trigger < triggerCount; ++trigger)
+    {
+        const auto& p = triggerParameters[(size_t) trigger];
+        auto& settings = cachedTriggers[(size_t) trigger];
+        // Trigger 1 has no Off, so its first choice is Grid.
+        const auto mode = juce::roundToInt (p.mode->load()) + (trigger == 0 ? 1 : 0);
+        settings.mode = static_cast<TriggerMode> (juce::jlimit (0, 3, mode));
+        settings.division = juce::roundToInt (p.division->load());
+        settings.speed = juce::jmax (0.01f, p.speed->load());
+        settings.source = juce::jlimit (0, sourceNames.size() - 1, juce::roundToInt (p.source->load()));
+        settings.threshold = p.threshold->load();
+        settings.sensitivity = p.sensitivity->load();
+        settings.solo = p.solo->load() >= 0.5f;
+        settings.depth = p.depth->load();
+        settings.highDepth = p.highDepth->load();
+        settings.band = p.band->load() >= 0.5f;
+        settings.highCurve = p.highCurve->load() >= 0.5f;
+    }
+
     cachedMix = mixParam->load();
-    cachedMode = juce::roundToInt (modeParam->load());
-    cachedDivision = juce::roundToInt (divisionParam->load());
-    cachedSpeed = juce::jmax (0.01f, speedParam->load());
     cachedPreduckMs = preduckParam->load();
     cachedRampDownMs = rampDownParam->load();
     cachedRampShape = rampShapeParam->load();
-    cachedThreshold = thresholdParam->load();
-    cachedSensitivity = sensitivityParam->load();
-    cachedSidechainSolo = sidechainSoloParam->load() >= 0.5f;
     cachedRingmodEnabled = ringmodEnabledParam->load() >= 0.5f;
     cachedRingmodIntensity = ringmodIntensityParam->load();
     cachedRingmodDucked = ringmodDuckedParam->load() >= 0.5f;
     cachedAmplitudeModulationEnabled = amplitudeModulationEnabledParam->load() >= 0.5f;
     cachedAmplitudeModulationDepth = amplitudeModulationDepthParam->load();
-    cachedBandEnabled = bandEnabledParam->load() >= 0.5f;
-    cachedHighCurveEnabled = highCurveEnabledParam->load() >= 0.5f;
     cachedBandCutoffHz = bandCutoffParam->load();
-    updateLatencyForPreduck();
 }
 
 void SidechainerAudioProcessor::updateLatencyForPreduck()
 {
     const auto latencySamples = juce::jlimit (0, maxLookaheadSamples,
-                                             juce::roundToInt (currentSampleRate * (cachedPreduckMs + cachedRampDownMs) / 1000.0));
+                                             juce::roundToInt (currentSampleRate * (preduckParam->load() + rampDownParam->load()) / 1000.0));
 
-    if (latencySamples != reportedLatencySamples)
+    if (reportedLatencySamples.exchange (latencySamples) != latencySamples)
+        setLatencySamples (latencySamples);
+}
+
+Curve SidechainerAudioProcessor::getCurve (int slot) const
+{
+    const juce::ScopedLock lock (curveLock);
+    return curves[(size_t) slot];
+}
+
+void SidechainerAudioProcessor::setCurve (int slot, const Curve& curve)
+{
     {
-        reportedLatencySamples = latencySamples;
-        setLatencySamples (reportedLatencySamples);
+        const juce::ScopedLock lock (curveLock);
+
+        if (curves[(size_t) slot] == curve)
+            return;
+
+        curves[(size_t) slot] = curve;
+        curveTables[(size_t) slot].publish (curve);
     }
+
+    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
 }
 
 void SidechainerAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = parameters.copyState().createXml())
-        copyXmlToBinary (*xml, destData);
+    auto xml = parameters.copyState().createXml();
+
+    if (xml == nullptr)
+        return;
+
+    {
+        const juce::ScopedLock lock (curveLock);
+        auto* curvesXml = xml->createNewChildElement (curvesTag);
+
+        for (size_t i = 0; i < curves.size(); ++i)
+            curvesXml->addChildElement (new juce::XmlElement (curves[i].toXml (curveTags[i])));
+    }
+
+    xml->setAttribute (editTriggerAttribute, editTrigger.load());
+    copyXmlToBinary (*xml, destData);
 }
 
 void SidechainerAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xmlState = getXmlFromBinary (data, sizeInBytes))
-        if (xmlState->hasTagName (parameters.state.getType()))
-            parameters.replaceState (juce::ValueTree::fromXml (*xmlState));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+
+    if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
+        return;
+
+    std::array<Curve, curveCount> loaded;
+    loaded.fill (Curve::makeDefault());
+
+    if (auto* curvesXml = xml->getChildByName (curvesTag))
+    {
+        for (size_t i = 0; i < loaded.size(); ++i)
+            if (auto* curveXml = curvesXml->getChildByName (curveTags[i]))
+                loaded[i].loadFromXml (*curveXml);
+
+        xml->removeChildElement (curvesXml, true);
+    }
+
+    // A project from before curves had points of their own: Trigger 1's curves were 16 parameters each.
+    for (size_t high = 0; high < oldCurvePointPrefixes.size(); ++high)
+    {
+        std::vector<float> values (oldCurvePointCount, -1.0f);
+
+        for (auto* param = xml->getFirstChildElement(); param != nullptr;)
+        {
+            auto* next = param->getNextElement();
+            const auto id = param->getStringAttribute ("id");
+
+            if (id.startsWith (oldCurvePointPrefixes[high]) && id.length() == juce::String (oldCurvePointPrefixes[high]).length() + 2)
+            {
+                const auto index = id.getLastCharacters (2).getIntValue();
+
+                if (juce::isPositiveAndBelow (index, oldCurvePointCount))
+                    values[(size_t) index] = static_cast<float> (param->getDoubleAttribute ("value"));
+
+                xml->removeChildElement (param, true);
+            }
+
+            param = next;
+        }
+
+        if (std::none_of (values.begin(), values.end(), [] (float value) { return value < 0.0f; }))
+            loaded[(size_t) curveSlot (0, high == 1)] = Curve::fromEvenPoints (values);
+    }
+
+    editTrigger = juce::jlimit (0, triggerCount - 1, xml->getIntAttribute (editTriggerAttribute));
+    xml->removeAttribute (editTriggerAttribute);
+    parameters.replaceState (juce::ValueTree::fromXml (*xml));
+
+    {
+        const juce::ScopedLock lock (curveLock);
+        curves = loaded;
+
+        for (size_t i = 0; i < curves.size(); ++i)
+            curveTables[i].publish (curves[i]);
+    }
+
+    sendChangeMessage();
 }
 
 juce::AudioProcessorEditor* SidechainerAudioProcessor::createEditor()

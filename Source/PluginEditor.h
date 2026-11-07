@@ -6,11 +6,12 @@
 #include "UI/AccessibleToggleButton.h"
 #include "UI/CurveEditor.h"
 
-class SidechainerAudioProcessorEditor final : public juce::AudioProcessorEditor
+class SidechainerAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                              private juce::ChangeListener
 {
 public:
     explicit SidechainerAudioProcessorEditor (SidechainerAudioProcessor&);
-    ~SidechainerAudioProcessorEditor() override = default;
+    ~SidechainerAudioProcessorEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -22,7 +23,6 @@ public:
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     struct Group final : public juce::Component
@@ -34,28 +34,41 @@ private:
         juce::String title;
     };
 
-    void configureSlider (AccessibleSlider& slider,
-                          juce::Label& label,
-                          const juce::String& title,
-                          int focusOrder);
+    // A list for a choice parameter whose item IDs are the choice numbers plus 1, so it can leave choices out.
+    class ChoiceAttachment final
+    {
+    public:
+        ChoiceAttachment (juce::RangedAudioParameter& parameter, juce::ComboBox& box);
+        ~ChoiceAttachment();
 
-    void configureCombo (juce::ComboBox& combo,
-                         const juce::String& title,
-                         int focusOrder);
+    private:
+        juce::ComboBox& comboBox;
+        juce::ParameterAttachment attachment;
+    };
 
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void configureSlider (AccessibleSlider& slider, juce::Label& label, const juce::String& title, int focusOrder);
+    void configureCombo (juce::ComboBox& combo, juce::Label& label, const juce::String& title, int focusOrder);
+    void configureToggle (juce::Button& button, int focusOrder);
+    void bindTrigger (int trigger);
     void updateHighCurveVisibility();
     void focusGroup (int delta);
 
+    SidechainerAudioProcessor& triggerProcessor;
     juce::AudioProcessorValueTreeState& parameters;
+    int boundTrigger = -1;
 
-    Group timingGroup { "Timing" };
-    Group sidechainGroup { "Sidechain" };
+    Group triggerGroup { "Trigger" };
+    Group rampGroup { "Ramp" };
+    Group effectsGroup { "Sidechain Effects" };
     Group outputGroup { "Output" };
     CurveEditor curveEditor;
     CurveEditor highCurveEditor;
 
+    AccessibleComboBox editTriggerBox;
     AccessibleComboBox triggerModeBox;
     AccessibleComboBox divisionBox;
+    AccessibleComboBox sourceBox;
     AccessibleToggleButton sidechainSoloButton { "Sidechain Solo" };
     AccessibleToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
     AccessibleToggleButton ringmodDuckedButton { "Duck Ringmod" };
@@ -64,44 +77,40 @@ private:
     AccessibleToggleButton highCurveEnabledButton { "High Curve" };
     // Normal and fine steps, in the unit each value is shown in; percentages step in fractions (0.01 is 1%).
     AccessibleSlider speedSlider { 0.1, 0.01 };
+    AccessibleSlider thresholdSlider { 1.0, 0.1 };
+    AccessibleSlider sensitivitySlider { 1.0, 0.1 };
+    AccessibleSlider depthSlider { 0.01, 0.001 };
+    AccessibleSlider highDepthSlider { 0.01, 0.001 };
     AccessibleSlider rampDownSlider { 1.0, 0.1 };
     AccessibleSlider rampShapeSlider { 0.1, 0.01 };
     AccessibleSlider preduckSlider { 1.0, 0.1 };
-    AccessibleSlider thresholdSlider { 1.0, 0.1 };
-    AccessibleSlider sensitivitySlider { 1.0, 0.1 };
     AccessibleSlider ringmodIntensitySlider { 0.01, 0.001 };
     AccessibleSlider amplitudeModulationDepthSlider { 0.01, 0.001 };
     AccessibleSlider bandCutoffSlider { 100.0, 10.0 };
-    AccessibleSlider depthSlider { 0.01, 0.001 };
-    AccessibleSlider highDepthSlider { 0.01, 0.001 };
     AccessibleSlider mixSlider { 0.01, 0.001 };
 
-    juce::Label speedLabel, rampDownLabel, rampShapeLabel, preduckLabel, thresholdLabel, sensitivityLabel;
-    juce::Label ringmodIntensityLabel, amplitudeModulationDepthLabel;
-    juce::Label bandCutoffLabel, depthLabel, highDepthLabel, mixLabel;
+    juce::Label editTriggerLabel, triggerModeLabel, divisionLabel, sourceLabel;
+    juce::Label speedLabel, thresholdLabel, sensitivityLabel, depthLabel, highDepthLabel;
+    juce::Label rampDownLabel, rampShapeLabel, preduckLabel, ringmodIntensityLabel, amplitudeModulationDepthLabel;
+    juce::Label bandCutoffLabel, mixLabel;
 
-    std::unique_ptr<ComboBoxAttachment> triggerModeAttachment;
-    std::unique_ptr<ComboBoxAttachment> divisionAttachment;
-    std::unique_ptr<ButtonAttachment> sidechainSoloAttachment;
-    std::unique_ptr<ButtonAttachment> ringmodEnabledAttachment;
-    std::unique_ptr<ButtonAttachment> ringmodDuckedAttachment;
-    std::unique_ptr<ButtonAttachment> amplitudeModulationAttachment;
-    std::unique_ptr<ButtonAttachment> bandEnabledAttachment;
-    std::unique_ptr<ButtonAttachment> highCurveEnabledAttachment;
-    std::unique_ptr<SliderAttachment> speedAttachment;
-    std::unique_ptr<SliderAttachment> rampDownAttachment;
-    std::unique_ptr<SliderAttachment> rampShapeAttachment;
-    std::unique_ptr<SliderAttachment> preduckAttachment;
-    std::unique_ptr<SliderAttachment> thresholdAttachment;
-    std::unique_ptr<SliderAttachment> sensitivityAttachment;
-    std::unique_ptr<SliderAttachment> ringmodIntensityAttachment;
-    std::unique_ptr<SliderAttachment> amplitudeModulationDepthAttachment;
-    std::unique_ptr<SliderAttachment> bandCutoffAttachment;
-    std::unique_ptr<SliderAttachment> depthAttachment;
-    std::unique_ptr<SliderAttachment> highDepthAttachment;
-    std::unique_ptr<SliderAttachment> mixAttachment;
+    // The trigger shown by Edit Trigger.
+    std::unique_ptr<ChoiceAttachment> triggerModeAttachment, divisionAttachment, sourceAttachment;
+    std::unique_ptr<ButtonAttachment> sidechainSoloAttachment, bandEnabledAttachment, highCurveEnabledAttachment;
+    std::unique_ptr<SliderAttachment> speedAttachment, thresholdAttachment, sensitivityAttachment, depthAttachment, highDepthAttachment;
 
-    std::array<juce::Component*, 5> focusGroups {};
+    ButtonAttachment ringmodEnabledAttachment { parameters, "ringmodEnabled", ringmodEnabledButton };
+    ButtonAttachment ringmodDuckedAttachment { parameters, "ringmodDucked", ringmodDuckedButton };
+    ButtonAttachment amplitudeModulationAttachment { parameters, "amplitudeModulationEnabled", amplitudeModulationButton };
+    SliderAttachment rampDownAttachment { parameters, "rampDown", rampDownSlider };
+    SliderAttachment rampShapeAttachment { parameters, "rampShape", rampShapeSlider };
+    SliderAttachment preduckAttachment { parameters, "preduck", preduckSlider };
+    SliderAttachment ringmodIntensityAttachment { parameters, "ringmodIntensity", ringmodIntensitySlider };
+    SliderAttachment amplitudeModulationDepthAttachment { parameters, "amplitudeModulationDepth", amplitudeModulationDepthSlider };
+    SliderAttachment bandCutoffAttachment { parameters, "bandCutoff", bandCutoffSlider };
+    SliderAttachment mixAttachment { parameters, "mix", mixSlider };
+
+    std::array<juce::Component*, 6> focusGroups {};
     juce::Component::SafePointer<juce::Component> lastFocusedControl;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SidechainerAudioProcessorEditor)

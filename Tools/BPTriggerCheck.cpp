@@ -1,6 +1,7 @@
 // Offline host for the built BP-Trigger VST3. Loads it as a host does and
 // checks its buses, parameters, texts, latency and saved state, and the gain
-// it applies in each trigger mode against the curve it was given.
+// it applies in each trigger mode against the curve it was given, from one
+// trigger and from both.
 //
 // BPTriggerCheck <path to BP-Trigger.vst3>
 
@@ -44,6 +45,8 @@ struct TestPlayHead final : public juce::AudioPlayHead
 };
 
 using Signal = std::function<float (juce::int64)>;
+// A sample of each input channel: 0 and 1 the main input, 2 and 3 the sidechain, 4 and 5 Sidechain 2.
+using Inputs = std::function<float (juce::int64, int)>;
 
 struct Host
 {
@@ -98,6 +101,11 @@ struct Host
     // Plays `seconds` of audio; returns the left output.
     std::vector<float> run (double seconds, const Signal& main, const Signal& sidechain)
     {
+        return run (seconds, [main, sidechain] (juce::int64 t, int channel) { return channel < 2 ? main (t) : channel < 4 ? sidechain (t) : 0.0f; });
+    }
+
+    std::vector<float> run (double seconds, const Inputs& inputs)
+    {
         std::vector<float> output;
         ppqAt.clear();
         const auto total = static_cast<int> (seconds * sampleRate);
@@ -106,16 +114,11 @@ struct Host
         for (int start = 0; start < total; start += blockSize)
         {
             const auto count = juce::jmin (blockSize, total - start);
-            juce::AudioBuffer<float> buffer (4, count);
+            juce::AudioBuffer<float> buffer (juce::jmax (plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), count);
 
-            for (int i = 0; i < count; ++i)
-            {
-                const auto t = playHead.timeInSamples + i;
-                buffer.setSample (0, i, main (t));
-                buffer.setSample (1, i, main (t));
-                buffer.setSample (2, i, sidechain (t));
-                buffer.setSample (3, i, sidechain (t));
-            }
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                for (int i = 0; i < count; ++i)
+                    buffer.setSample (ch, i, inputs (playHead.timeInSamples + i, ch));
 
             plugin->processBlock (buffer, midi);
 
@@ -140,25 +143,21 @@ struct Host
     std::unique_ptr<juce::AudioPluginInstance> plugin;
 };
 
-// The default curve: point i of 16 is (i / 15) squared, in the whole percents a host's
-// value takes, read with straight lines between points.
+// The default curve: from 0% to 100% along the square of the way through it.
 float defaultCurve (double phase)
 {
-    const auto point = [] (int i) { return std::round (std::pow (i / 15.0, 2.0) * 100.0) / 100.0; };
-    const auto scaled = juce::jlimit (0.0, 1.0, phase) * 15.0;
-    const auto index = juce::jlimit (0, 14, static_cast<int> (scaled));
-    return static_cast<float> (point (index) + (point (index + 1) - point (index)) * (scaled - index));
+    const auto p = juce::jlimit (0.0, 1.0, phase);
+    return static_cast<float> (p * p);
 }
 
 using Expected = std::function<float (size_t)>;
 
 // The expected gain of each sample from its place in a cycle of the grid, `cycleBeats` long.
-Expected onGrid (const Host& host, float cycleBeats, std::function<float (double)> gainAtPosition)
+Expected onGrid (const Host& host, double cycleBeats, std::function<float (double)> gainAtPosition)
 {
     return [&host, cycleBeats, gainAtPosition] (size_t i)
     {
-        const auto beats = static_cast<double> (cycleBeats);
-        return gainAtPosition (std::fmod (host.ppqAt[i], beats) / beats);
+        return gainAtPosition (std::fmod (host.ppqAt[i], cycleBeats) / cycleBeats);
     };
 }
 
@@ -228,6 +227,29 @@ bool allFinite (const std::vector<float>& output)
 
 Signal constant (float value)   { return [value] (juce::int64) { return value; }; }
 
+// A hosted VST3's state holds the plug-in's own, in base64, as its IComponent.
+std::unique_ptr<juce::XmlElement> pluginState (const juce::MemoryBlock& hostState)
+{
+    const auto head = juce::AudioProcessor::getXmlFromBinary (hostState.getData(), static_cast<int> (hostState.getSize()));
+    const auto* component = head != nullptr ? head->getChildByName ("IComponent") : nullptr;
+    juce::MemoryBlock data;
+
+    if (component == nullptr || ! data.fromBase64Encoding (component->getAllSubText()))
+        return {};
+
+    return juce::AudioProcessor::getXmlFromBinary (data.getData(), static_cast<int> (data.getSize()));
+}
+
+juce::MemoryBlock hostStateHolding (const juce::XmlElement& state)
+{
+    juce::MemoryBlock data, hostState;
+    juce::AudioProcessor::copyXmlToBinary (state, data);
+    juce::XmlElement head ("VST3PluginState");
+    head.createNewChildElement ("IComponent")->addTextElement (data.toBase64Encoding());
+    juce::AudioProcessor::copyXmlToBinary (head, hostState);
+    return hostState;
+}
+
 void checkGridMode (juce::AudioPluginFormat& format, const juce::PluginDescription& description, double rate)
 {
     std::cout << "\nGrid at " << rate << " Hz:" << std::endl;
@@ -243,31 +265,31 @@ void checkGridMode (juce::AudioPluginFormat& format, const juce::PluginDescripti
     check (gainAt (output, rate, 1.01, 0.5f) < 0.01f, "the beat ducks to silence");
 
     host.reset();
-    host.set ("Speed", "2");
+    host.set ("Trigger 1 Speed", "2");
     output = host.run (2.0, constant (0.5f), constant (0.0f));
     check (largestGainError (output, rate, 0.5, 2.0, 0.5f, onGrid (host, 1.0f, [] (double p) { return defaultCurve (p * 2.0); })) < 0.002f,
            "Speed 2.00x plays the curve in half the time, then holds full level");
 
     host.reset();
-    host.set ("Speed", "1");
-    host.set ("Depth", "50");
+    host.set ("Trigger 1 Speed", "1");
+    host.set ("Trigger 1 Depth", "50");
     output = host.run (2.0, constant (0.5f), constant (0.0f));
     check (largestGainError (output, rate, 0.5, 2.0, 0.5f, onGrid (host, 1.0f, [] (double p) { return 1.0f - 0.5f * (1.0f - defaultCurve (p)); })) < 0.002f,
            "Depth 50% halves the reduction");
 
     host.reset();
-    host.set ("Depth", "100");
-    host.set ("Grid Division", "1/8");
+    host.set ("Trigger 1 Depth", "100");
+    host.set ("Trigger 1 Grid Division", "1/8");
     output = host.run (2.0, constant (0.5f), constant (0.0f));
     check (largestGainError (output, rate, 0.5, 2.0, 0.5f, onGrid (host, 0.5f, defaultCurve)) < 0.002f, "1/8 notes run the curve twice a beat");
 
     host.reset();
-    host.set ("Grid Division", "1/4 triplet");
+    host.set ("Trigger 1 Grid Division", "1/4 triplet");
     output = host.run (2.0, constant (0.5f), constant (0.0f));
-    check (largestGainError (output, rate, 0.5, 2.0, 0.5f, onGrid (host, 2.0f / 3.0f, defaultCurve)) < 0.002f, "1/4 triplets run the curve three times in two beats");
+    check (largestGainError (output, rate, 0.5, 2.0, 0.5f, onGrid (host, 2.0 / 3.0, defaultCurve)) < 0.002f, "1/4 triplets run the curve three times in two beats");
 
     host.reset();
-    host.set ("Grid Division", "1/4");
+    host.set ("Trigger 1 Grid Division", "1/4");
     host.set ("Mix", "0");
     output = host.run (1.0, constant (0.5f), constant (0.0f));
     check (largestGainError (output, rate, 0.1, 1.0, 0.5f, atTime (rate, [] (double) { return 1.0f; })) < 1.0e-6f, "Mix 0% leaves the signal dry");
@@ -296,7 +318,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
         return [hitAt, level] (juce::int64 t) { return t >= hitAt && t < hitAt + 240 ? level : 0.0f; };
     };
 
-    host.set ("Trigger Mode", "Sidechain");
+    host.set ("Trigger 1 Mode", "Sidechain");
     host.playHead.playing = false;
     auto output = host.run (1.0, constant (0.5f), hit (0.5f));
     check (largestGainError (output, rate, 0.05, 0.25, 0.5f, atTime (rate, [] (double) { return 1.0f; })) < 0.001f,
@@ -312,14 +334,14 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
            "a hit below the -26 dB threshold does nothing");
 
     host.reset();
-    host.set ("Sidechain Threshold", "-40");
+    host.set ("Trigger 1 Threshold", "-40");
     output = host.run (1.0, constant (0.5f), hit (0.02f));
     check (gainAt (output, rate, 0.26, 0.5f) < 0.01f, "with the threshold at -40 dB the same hit ducks");
-    host.set ("Sidechain Threshold", "-26");
+    host.set ("Trigger 1 Threshold", "-26");
 
     std::cout << "\nGrid and Sidechain:" << std::endl;
     host.reset();
-    host.set ("Trigger Mode", "Grid and Sidechain");
+    host.set ("Trigger 1 Mode", "Grid and Sidechain");
     host.playHead.playing = true;
     const auto lateHit = static_cast<juce::int64> (0.9 * rate);
     output = host.run (1.2, constant (0.5f), [lateHit] (juce::int64 t) { return t >= lateHit && t < lateHit + 240 ? 0.5f : 0.0f; });
@@ -328,8 +350,8 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
 
     std::cout << "\nSidechain Solo:" << std::endl;
     host.reset();
-    host.set ("Trigger Mode", "Grid");
-    host.set ("Sidechain Solo", "1");
+    host.set ("Trigger 1 Mode", "Grid");
+    host.set ("Trigger 1 Sidechain Solo", "1");
     const auto sine = [rate] (float level) -> Signal
     {
         return [rate, level] (juce::int64 t) { return level * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * 1000.0 * static_cast<double> (t) / rate)); };
@@ -343,7 +365,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     host.reset();
     output = host.run (0.5, constant (0.5f), sine (0.01f));
     check (std::all_of (output.begin() + 48, output.end(), [] (float x) { return x == 0.0f; }), "a sidechain below the threshold is silent");
-    host.set ("Sidechain Solo", "0");
+    host.set ("Trigger 1 Sidechain Solo", "0");
 
     // The ringmod and amplitude modulation add nothing at DC, so these use a 1 kHz input at 0.5 and read
     // its level as its peak over one cycle.
@@ -355,7 +377,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
 
     std::cout << "\nRingmod:" << std::endl;
     host.reset();
-    host.set ("Trigger Mode", "Sidechain");
+    host.set ("Trigger 1 Mode", "Sidechain");
     host.set ("Ringmod Sidechain", "1");
     output = host.run (0.5, sine (0.5f), constant (0.04f));
     check (std::abs (levelAt (output, 0.4) - 0.5f * (1.0f - 2.0f * 0.04f)) < 0.001f, "Ringmod Intensity 100% multiplies by the sidechain");
@@ -380,7 +402,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     // level at the sidechain's peaks and halves it at its troughs, and gives the input back once it stops.
     std::cout << "\nAmplitude Modulation:" << std::endl;
     host.reset();
-    host.set ("Depth", "0");
+    host.set ("Trigger 1 Depth", "0");
     host.set ("Amplitude Modulation", "1");
     const Signal fiftyHertz = [rate] (juce::int64 t)
     {
@@ -398,7 +420,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
            "it moves the input between full level and half at 100% (" + juce::String (lowest, 3) + " to " + juce::String (highest, 3) + ")");
     check (std::abs (levelAt (output, 1.45) - 0.5f) < 0.0005f, "after the sidechain stops, the input comes back unchanged (" + juce::String (levelAt (output, 1.45), 4) + ")");
     host.set ("Amplitude Modulation", "0");
-    host.set ("Depth", "100");
+    host.set ("Trigger 1 Depth", "100");
 }
 
 void checkBandMode (juce::AudioPluginFormat& format, const juce::PluginDescription& description)
@@ -422,7 +444,7 @@ void checkBandMode (juce::AudioPluginFormat& format, const juce::PluginDescripti
     check (amplitudeOf (output, rate, 6000.0, 1.01, 0.04) < 0.01f, "without Band the whole signal ducks");
 
     host.reset();
-    host.set ("Band", "1");
+    host.set ("Trigger 1 Band", "1");
     host.set ("Band Cutoff", "300");
     output = host.run (1.2, lowAndHigh, constant (0.0f));
     const auto high = amplitudeOf (output, rate, 6000.0, 1.01, 0.04);
@@ -431,12 +453,12 @@ void checkBandMode (juce::AudioPluginFormat& format, const juce::PluginDescripti
                                          + juce::String (high, 3) + ", 50 Hz " + juce::String (low, 3) + ")");
 
     host.reset();
-    host.set ("High Curve", "1");
+    host.set ("Trigger 1 High Curve", "1");
     output = host.run (1.2, lowAndHigh, constant (0.0f));
     check (amplitudeOf (output, rate, 6000.0, 1.01, 0.04) < 0.01f, "High Curve ducks the high band with its own curve");
 
     host.reset();
-    host.set ("High Depth", "0");
+    host.set ("Trigger 1 High Depth", "0");
     output = host.run (1.2, lowAndHigh, constant (0.0f));
     check (amplitudeOf (output, rate, 6000.0, 1.01, 0.04) > 0.37f, "High Depth 0% leaves the high band alone");
 }
@@ -452,39 +474,43 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
     auto& plugin = *host.plugin;
     check (description.name == "BP-Trigger" && description.manufacturerName == "Blind Producers", "BP-Trigger by Blind Producers");
     check (plugin.hasEditor(), "it has an editor");
-    check (plugin.getBusCount (true) == 2 && plugin.getBusCount (false) == 1, "two input buses (main and sidechain) and one output");
-    check (plugin.getChannelCountOfBus (true, 0) == 2 && plugin.getChannelCountOfBus (true, 1) == 2 && plugin.getChannelCountOfBus (false, 0) == 2,
-           "all stereo, so the sidechain sits on pins 3 and 4 in REAPER");
+    check (plugin.getBusCount (true) == 3 && plugin.getBusCount (false) == 1, "three input buses (main, Sidechain and Sidechain 2) and one output");
+    check (plugin.getChannelCountOfBus (true, 0) == 2 && plugin.getChannelCountOfBus (true, 1) == 2 && plugin.getChannelCountOfBus (true, 2) == 2
+               && plugin.getChannelCountOfBus (false, 0) == 2,
+           "all stereo, so the sidechains sit on pins 3/4 and 5/6 in REAPER");
 
     juce::StringArray names;
     for (auto* p : plugin.getParameters())
         names.add (p->getName (128));
 
     auto allThere = true;
-    for (auto name : { "Depth", "High Depth", "Mix", "Trigger Mode", "Grid Division", "Speed", "Pre-duck", "Ramp Down", "Ramp Shape",
-                       "Sidechain Threshold", "Detector Release", "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Duck Ringmod",
-                       "Amplitude Modulation", "Amplitude Modulation Depth", "Band",
-                       "High Curve", "Band Cutoff" })
+    for (auto trigger : { "Trigger 1 ", "Trigger 2 " })
+        for (auto name : { "Mode", "Grid Division", "Speed", "Source", "Threshold", "Detector Release", "Sidechain Solo", "Depth", "High Depth",
+                           "Band", "High Curve" })
+            allThere = allThere && names.contains (trigger + juce::String (name));
+    for (auto name : { "Ramp Down", "Ramp Shape", "Pre-duck", "Ringmod Sidechain", "Ringmod Intensity", "Duck Ringmod",
+                       "Amplitude Modulation", "Amplitude Modulation Depth", "Band Cutoff", "Mix" })
         allThere = allThere && names.contains (name);
-    for (int i = 1; i <= 16; ++i)
-        allThere = allThere && names.contains ("Curve Point " + juce::String (i)) && names.contains ("High Curve Point " + juce::String (i));
-    check (allThere, "all 20 controls and both sets of 16 curve points are automatable (" + juce::String (names.size()) + " parameters)");
+    names.removeString ("Bypass");   // added by JUCE's VST3 wrapper
+    check (allThere && names.size() == 32, "both triggers' 11 controls and the 10 shared ones are automatable (" + names.joinIntoString (", ") + ")");
 
     const auto text = [&host] (const juce::String& name)
     {
         auto* p = host.parameter (name);
         return p != nullptr ? p->getCurrentValueAsText() : juce::String();
     };
-    check (text ("Trigger Mode") == "Grid" && text ("Grid Division") == "1/4" && text ("Speed") == "1.00x"
-               && text ("Sidechain Threshold") == "-26.0 dB" && text ("Detector Release") == "50.5 ms" && text ("Band Cutoff") == "300 Hz"
-               && text ("Depth") == "100%" && text ("Pre-duck") == "0.0 ms",
-           "values read as text: " + text ("Trigger Mode") + ", " + text ("Grid Division") + ", " + text ("Speed") + ", "
-               + text ("Sidechain Threshold") + ", " + text ("Detector Release") + ", " + text ("Band Cutoff") + ", "
-               + text ("Depth") + ", " + text ("Pre-duck"));
+    check (text ("Trigger 2 Mode") == "Off" && text ("Trigger 1 Source") == "Sidechain" && text ("Trigger 2 Source") == "Sidechain 2",
+           "Trigger 2 starts off, on Sidechain 2; Trigger 1 listens to the sidechain");
+    check (text ("Trigger 1 Mode") == "Grid" && text ("Trigger 1 Grid Division") == "1/4" && text ("Trigger 1 Speed") == "1.00x"
+               && text ("Trigger 1 Threshold") == "-26.0 dB" && text ("Trigger 1 Detector Release") == "50.5 ms" && text ("Band Cutoff") == "300 Hz"
+               && text ("Trigger 1 Depth") == "100%" && text ("Pre-duck") == "0.0 ms",
+           "values read as text: " + text ("Trigger 1 Mode") + ", " + text ("Trigger 1 Grid Division") + ", " + text ("Trigger 1 Speed") + ", "
+               + text ("Trigger 1 Threshold") + ", " + text ("Trigger 1 Detector Release") + ", " + text ("Band Cutoff") + ", "
+               + text ("Trigger 1 Depth") + ", " + text ("Pre-duck"));
 
     host.set ("Band Cutoff", "1.5 kHz");
-    host.set ("Detector Release", "10");
-    check (text ("Band Cutoff") == "1.5 kHz" && text ("Detector Release") == "10 ms", "typed values are understood (1.5 kHz, 10 ms)");
+    host.set ("Trigger 1 Detector Release", "10");
+    check (text ("Band Cutoff") == "1.5 kHz" && text ("Trigger 1 Detector Release") == "10 ms", "typed values are understood (1.5 kHz, 10 ms)");
 
     host.set ("Pre-duck", "5");
     host.run (0.1, constant (0.0f), constant (0.0f));
@@ -497,15 +523,31 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
     host.run (0.1, constant (0.0f), constant (0.0f));
     check (plugin.getLatencySamples() == 0, "and none without them");
 
-    host.set ("Depth", "37");
-    host.set ("Trigger Mode", "Grid and Sidechain");
-    host.set ("Grid Division", "1/8 triplet");
-    host.set ("Curve Point 5", "42");
-    host.set ("High Curve Point 9", "7");
-    host.set ("Band", "1");
+    host.set ("Trigger 1 Depth", "37");
+    host.set ("Trigger 1 Mode", "Grid and Sidechain");
+    host.set ("Trigger 1 Grid Division", "1/8 triplet");
+    host.set ("Trigger 2 Mode", "Sidechain");
+    host.set ("Trigger 2 Source", "Sidechain Right");
+    host.set ("Trigger 1 Band", "1");
     host.run (0.1, constant (0.0f), constant (0.0f));   // a host hands parameter changes over with the next block
+
+    // A curve with a point added, as the curve editor saves it in the project.
     juce::MemoryBlock state;
     plugin.getStateInformation (state);
+    auto xml = pluginState (state);
+    auto* trigger2High = xml != nullptr && xml->getChildByName ("Curves") != nullptr ? xml->getChildByName ("Curves")->getChildByName ("Trigger2High") : nullptr;
+    check (trigger2High != nullptr && trigger2High->getNumChildElements() == 2, "the project holds each curve's points");
+
+    if (trigger2High == nullptr)
+        return;
+
+    auto* point = new juce::XmlElement ("Point");
+    point->setAttribute ("position", 40);
+    point->setAttribute ("value", 900);
+    point->setAttribute ("curve", -30);
+    trigger2High->insertChildElement (point, 1);
+    xml->setAttribute ("editTrigger", 1);
+    state = hostStateHolding (*xml);
 
     Host copy (format, description, 48000.0, 512);
     copy.plugin->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
@@ -520,7 +562,120 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
             same = false;
         }
     }
-    check (same && copy.parameter ("Curve Point 5")->getCurrentValueAsText() == "42%", "a saved project restores every setting");
+
+    juce::MemoryBlock copied;
+    copy.plugin->getStateInformation (copied);
+    const auto copiedXml = pluginState (copied);
+    check (same && copiedXml != nullptr && copiedXml->isEquivalentTo (xml.get(), false), "a saved project restores every setting and curve");
+
+    // A project from before curves had points of their own held Trigger 1's curves as 16 parameters each.
+    juce::XmlElement old ("BPTriggerState");
+    for (int i = 0; i < 16; ++i)
+    {
+        auto* param = old.createNewChildElement ("PARAM");
+        param->setAttribute ("id", "curvePoint" + juce::String (i).paddedLeft ('0', 2));
+        param->setAttribute ("value", i == 15 ? 1.0 : 0.5);
+    }
+    auto* oldDepth = old.createNewChildElement ("PARAM");
+    oldDepth->setAttribute ("id", "depth");
+    oldDepth->setAttribute ("value", 0.37);
+    const auto oldState = hostStateHolding (old);
+    copy.plugin->setStateInformation (oldState.getData(), static_cast<int> (oldState.getSize()));
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+    copy.plugin->getStateInformation (copied);
+    const auto converted = pluginState (copied);
+    const auto* curve = converted != nullptr ? converted->getChildByName ("Curves")->getChildByName ("Trigger1") : nullptr;
+    check (curve != nullptr && curve->getNumChildElements() == 16 && curve->getChildElement (1)->getIntAttribute ("position") == 7
+               && curve->getChildElement (1)->getIntAttribute ("value") == 500 && curve->getChildElement (15)->getIntAttribute ("value") == 1000
+               && copy.parameter ("Trigger 1 Depth")->getCurrentValueAsText() == "37%"
+               && converted->getChildByName ("PARAM") != nullptr && converted->getChildByAttribute ("id", "curvePoint00") == nullptr,
+           "an older project's 16 curve points become the curve's points");
+}
+
+void checkTwoTriggers (juce::AudioPluginFormat& format, const juce::PluginDescription& description)
+{
+    const auto rate = 48000.0;
+    std::cout << "\nTwo triggers:" << std::endl;
+    Host host (format, description, rate, 512);
+
+    if (host.plugin == nullptr)
+        return check (false, "the plug-in loads");
+
+    // Hits 5 ms long at 0.5 on the input channels given.
+    const auto hits = [rate] (std::vector<std::pair<double, int>> at) -> Inputs
+    {
+        return [rate, at] (juce::int64 t, int channel)
+        {
+            if (channel < 2)
+                return 0.5f;
+
+            for (const auto& [seconds, hitChannel] : at)
+            {
+                const auto start = static_cast<juce::int64> (seconds * rate);
+                if (channel == hitChannel && t >= start && t < start + 240)
+                    return 0.5f;
+            }
+
+            return 0.0f;
+        };
+    };
+
+    host.playHead.playing = false;
+    host.set ("Trigger 1 Mode", "Sidechain");
+    host.set ("Trigger 1 Source", "Sidechain Left");
+    auto output = host.run (0.6, hits ({ { 0.1, 3 }, { 0.35, 2 } }));
+    check (gainAt (output, rate, 0.11, 0.5f) > 0.999f && gainAt (output, rate, 0.36, 0.5f) < 0.01f,
+           "with Source on Sidechain Left, a hit on the right does nothing and one on the left ducks");
+
+    host.reset();
+    host.set ("Trigger 1 Source", "Sidechain");
+    host.set ("Trigger 1 Depth", "50");
+    host.set ("Trigger 2 Mode", "Sidechain");
+    output = host.run (1.4, hits ({ { 0.1, 2 }, { 0.7, 4 }, { 0.7, 2 } }));
+    check (std::abs (gainAt (output, rate, 0.2, 0.5f) - (1.0f - 0.5f * (1.0f - defaultCurve (0.2)))) < 0.005f,
+           "a hit on the sidechain ducks with Trigger 1's Depth of 50%");
+    check (largestGainError (output, rate, 0.7, 1.4, 0.5f, atTime (rate, [] (double t) { return t < 0.7 ? 1.0f : defaultCurve ((t - 0.7) / 0.5); })) < 0.002f,
+           "where both triggers duck, the deeper duck wins: Trigger 2's 100%");
+
+    host.reset();
+    host.set ("Trigger 2 Sidechain Solo", "1");
+    output = host.run (0.3, hits ({ { 0.1, 4 }, { 0.2, 2 } }));
+    // 4.5 ms in, the solo's 1 ms fade-in is at 99%.
+    check (output[static_cast<size_t> (0.1045 * rate)] > 0.49f && std::abs (output[static_cast<size_t> (0.2045 * rate)]) < 1.0e-3f,
+           "Trigger 2's Sidechain Solo plays Sidechain 2 only");
+    host.set ("Trigger 2 Sidechain Solo", "0");
+
+    host.reset();
+    host.set ("Trigger 2 Mode", "Off");
+    output = host.run (0.6, hits ({ { 0.1, 4 } }));
+    check (gainAt (output, rate, 0.11, 0.5f) > 0.999f, "with Trigger 2 off, Sidechain 2 does nothing");
+    host.set ("Trigger 1 Depth", "100");
+
+    // A kick on the sidechain ducks everything; a snare on Sidechain 2 ducks only the highs, with Band and
+    // High Curve on Trigger 2 alone and its Depth, the low band's, at 0%.
+    host.reset();
+    host.set ("Trigger 2 Mode", "Sidechain");
+    host.set ("Trigger 2 Band", "1");
+    host.set ("Trigger 2 High Curve", "1");
+    host.set ("Trigger 2 Depth", "0");
+    host.set ("Band Cutoff", "300");
+    const auto withHits = hits ({ { 0.3, 4 }, { 0.8, 2 } });
+    output = host.run (1.0, [rate, withHits] (juce::int64 t, int channel)
+                       {
+                           if (channel >= 2)
+                               return withHits (t, channel);
+
+                           const auto seconds = static_cast<double> (t) / rate;
+                           return static_cast<float> (0.4 * std::sin (juce::MathConstants<double>::twoPi * 50.0 * seconds)
+                                                    + 0.4 * std::sin (juce::MathConstants<double>::twoPi * 6000.0 * seconds));
+                       });
+    const auto snareLow = amplitudeOf (output, rate, 50.0, 0.31, 0.02), snareHigh = amplitudeOf (output, rate, 6000.0, 0.31, 0.02);
+    const auto kickLow = amplitudeOf (output, rate, 50.0, 0.81, 0.02), kickHigh = amplitudeOf (output, rate, 6000.0, 0.81, 0.02);
+    // The gentle split leaves about 5% of 6 kHz in the low band, which the snare leaves alone.
+    check (snareLow > 0.35f && snareHigh < 0.03f && kickLow < 0.01f && kickHigh < 0.01f,
+           "with Band on Trigger 2 only, the snare ducks the highs and leaves the lows, the kick ducks both (snare 50 Hz "
+               + juce::String (snareLow, 3) + ", 6 kHz " + juce::String (snareHigh, 3) + "; kick " + juce::String (kickLow, 3)
+               + ", " + juce::String (kickHigh, 3) + ")");
 }
 }
 
@@ -551,6 +706,7 @@ int main (int argc, char* argv[])
     checkGridMode (format, description, 96000.0);
     checkSidechainModes (format, description);
     checkBandMode (format, description);
+    checkTwoTriggers (format, description);
 
     std::cout << "\n" << (failures == 0 ? "All checks passed." : juce::String (failures) + " checks failed.") << std::endl;
     return failures == 0 ? 0 : 1;

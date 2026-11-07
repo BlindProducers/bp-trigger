@@ -349,12 +349,12 @@ void checkHostedPlugin (const juce::File& vst3)
     SetFocus (pluginWindow);
     settle (300);
 
-    for (auto virtualKey : { 0x09, 0x09,      // Tab, Tab
-                             0x24, 0x24,      // Home, Home
-                             0x22,            // Page Down
-                             0xBE, 0xBE,      // period, period
-                             0xBC,            // comma
-                             0x09, 0x23 })    // Tab, End
+    for (auto virtualKey : { 0x09, 0x09, 0x09,    // Tab, Tab, Tab
+                             0x24, 0x24,          // Home, Home
+                             0x22,                // Page Down
+                             0xBE, 0xBE,          // period, period
+                             0xBC,                // comma
+                             0xBE, 0x23 })        // period, End
         keyMessage (virtualKey);
 
     probe.finish();
@@ -365,7 +365,7 @@ void checkHostedPlugin (const juce::File& vst3)
             focusOrder.add (fields[2]);
 
     const auto order = focusOrder.joinIntoString (", ");
-    check (order == "Trigger Mode, Grid Division, Speed, Sidechain Solo, Band, Sidechain Solo, Ringmod Sidechain",
+    check (order == "Edit Trigger, Trigger Mode, Grid Division, Speed, Ramp Down, Ringmod Sidechain, Ramp Down, Ringmod Sidechain",
            "focus on opening, then Tab, period and comma: " + order);
 
     juce::StringArray speedValues;
@@ -378,7 +378,7 @@ void checkHostedPlugin (const juce::File& vst3)
     auto* speedParameter = [&plugin]() -> juce::AudioProcessorParameter*
     {
         for (auto* parameter : plugin->getParameters())
-            if (parameter->getName (64) == "Speed")
+            if (parameter->getName (64) == "Trigger 1 Speed")
                 return parameter;
 
         return nullptr;
@@ -430,19 +430,22 @@ int main (int argc, char* argv[])
     window.setVisible (true);
     settle (400);
 
+    auto* editTrigger = findTitled (*editor, "Edit Trigger");
     auto* triggerMode = findTitled (*editor, "Trigger Mode");
     auto* speed = findTitled (*editor, "Speed");
-    auto* threshold = findTitled (*editor, "Sidechain Threshold");
+    auto* threshold = findTitled (*editor, "Threshold");
     auto* cutoff = findTitled (*editor, "Band Cutoff");
     auto* solo = findTitled (*editor, "Sidechain Solo");
     auto* ringmod = findTitled (*editor, "Ringmod Sidechain");
     auto* highCurve = findTitled (*editor, "High Curve");
-    auto* mainCurve = findTitled (*editor, "Main / Low Curve Editor");
-    auto* firstPoint = findTitled (*editor, "Main / Low Curve Editor point 1");
+    // The curve's section, and in it the keyboard editor, which has the section's name.
+    auto* mainCurve = findTitled (*editor, "Trigger 1 Curve");
+    auto* curveEditor = mainCurve != nullptr ? mainCurve->getChildComponent (0) : nullptr;
     auto* presets = mainCurve != nullptr ? findTitled (*mainCurve, "Curve Presets") : nullptr;
+    const auto mainCurveSlot = SidechainerAudioProcessor::curveSlot (0, false);
 
-    if (triggerMode == nullptr || speed == nullptr || threshold == nullptr || cutoff == nullptr || solo == nullptr
-        || ringmod == nullptr || highCurve == nullptr || mainCurve == nullptr || firstPoint == nullptr || presets == nullptr)
+    if (editTrigger == nullptr || triggerMode == nullptr || speed == nullptr || threshold == nullptr || cutoff == nullptr || solo == nullptr
+        || ringmod == nullptr || highCurve == nullptr || mainCurve == nullptr || curveEditor == nullptr || presets == nullptr)
     {
         std::cout << "The editor is missing controls." << std::endl;
         return 1;
@@ -453,27 +456,27 @@ int main (int argc, char* argv[])
         check (titleOf (editor.get()) == "BP-Trigger", "the editor is titled BP-Trigger");
 
         auto groupsOk = true;
-        for (auto* title : { "Timing", "Sidechain", "Output", "Main / Low Curve Editor" })
+        for (auto* title : { "Trigger", "Ramp", "Sidechain Effects", "Output", "Trigger 1 Curve" })
             groupsOk = groupsOk && roleOf (findTitled (*editor, title)) == juce::AccessibilityRole::group && isInAccessibilityTree (window, title);
-        check (groupsOk, "four named groups: Timing, Sidechain, Output, Main / Low Curve Editor");
-        check (! isInAccessibilityTree (window, "High Curve Editor") && ! isInAccessibilityTree (window, "High Depth"),
-               "the High Curve Editor and High Depth stay hidden until High Curve is on");
+        check (groupsOk, "five named groups: Trigger, Ramp, Sidechain Effects, Output, Trigger 1 Curve");
+        check (! isInAccessibilityTree (window, "Trigger 1 High Curve") && ! isInAccessibilityTree (window, "High Depth"),
+               "the high curve and High Depth stay hidden until High Curve is on");
 
-        check (roleOf (triggerMode) == juce::AccessibilityRole::comboBox && valueOf (triggerMode) == "Grid"
+        check (roleOf (editTrigger) == juce::AccessibilityRole::comboBox && valueOf (editTrigger) == "Trigger 1"
+                   && roleOf (triggerMode) == juce::AccessibilityRole::comboBox && valueOf (triggerMode) == "Grid"
                    && valueOf (findTitled (*editor, "Grid Division")) == "1/4",
-               "Trigger Mode and Grid Division are combo boxes reading Grid and 1/4");
+               "Edit Trigger, Trigger Mode and Grid Division are combo boxes reading Trigger 1, Grid and 1/4");
         check (roleOf (speed) == juce::AccessibilityRole::slider && valueOf (speed) == "1.00x" && valueOf (threshold) == "-26.0 dB"
-                   && valueOf (findTitled (*editor, "Detector Release")) == "50 ms" && valueOf (cutoff) == "300 Hz"
+                   && valueOf (findTitled (*editor, "Detector Release")) == "50.5 ms" && valueOf (cutoff) == "300 Hz"
                    && valueOf (findTitled (*editor, "Depth")) == "100%" && valueOf (findTitled (*editor, "Ramp Down")) == "0.0 ms",
                "sliders read their values with units: " + valueOf (speed) + ", " + valueOf (threshold) + ", " + valueOf (cutoff));
         check (roleOf (solo) == juce::AccessibilityRole::toggleButton && ! solo->getAccessibilityHandler()->getCurrentState().isChecked(),
                "Sidechain Solo is a check box, not checked");
 
-        auto pointsOk = true;
-        for (int i = 1; i <= 16; ++i)
-            pointsOk = pointsOk && roleOf (findTitled (*mainCurve, "Main / Low Curve Editor point " + juce::String (i))) == juce::AccessibilityRole::slider;
-        check (pointsOk && valueOf (firstPoint) == "0%" && valueOf (findTitled (*mainCurve, "Main / Low Curve Editor point 16")) == "100%",
-               "the curve has 16 point sliders, from 0% to 100%");
+        const auto curveStatus = curveEditor->getAccessibilityHandler() != nullptr ? curveEditor->getAccessibilityHandler()->getDescription() : juce::String();
+        check (roleOf (curveEditor) == juce::AccessibilityRole::group && titleOf (curveEditor) == "Trigger 1 Curve"
+                   && curveEditor->getWantsKeyboardFocus() && curveStatus == "0%, point, value 0%, curve 50%",
+               "the curve editor is a group that reads the point at its cursor: " + curveStatus);
     }
 
     Probe probe;
@@ -485,19 +488,15 @@ int main (int argc, char* argv[])
         // A host giving the plug-in's window the focus, as REAPER does when it opens.
         window.grabKeyboardFocus();
         settle();
-        check (focused() == triggerMode, "opening the plug-in lands on Trigger Mode (" + describe (focused()) + ")");
+        check (focused() == editTrigger, "opening the plug-in lands on Edit Trigger (" + describe (focused()) + ")");
 
         // Tab runs through every control in every section, skipping the value boxes, then wraps.
-        juce::StringArray expected { "Grid Division", "Speed", "Ramp Down", "Ramp Shape",
-                                     "Sidechain Solo", "Ringmod Sidechain", "Duck Ringmod", "Ringmod Intensity",
-                                     "Amplitude Modulation", "Amplitude Modulation Depth", "Pre-duck",
-                                     "Sidechain Threshold", "Detector Release",
-                                     "Band", "High Curve", "Band Cutoff", "Depth", "Mix",
-                                     "Main / Low Curve Editor" };
-        for (int i = 1; i <= 16; ++i)
-            expected.add ("Main / Low Curve Editor point " + juce::String (i));
-        expected.add ("Curve Presets");
-        expected.add ("Trigger Mode");
+        const juce::StringArray expected { "Trigger Mode", "Grid Division", "Speed", "Source", "Threshold", "Detector Release",
+                                           "Sidechain Solo", "Depth", "Band", "High Curve", "Ramp Down", "Ramp Shape", "Pre-duck",
+                                           "Ringmod Sidechain", "Duck Ringmod", "Ringmod Intensity",
+                                           "Amplitude Modulation", "Amplitude Modulation Depth",
+                                           "Band Cutoff", "Mix",
+                                           "Trigger 1 Curve", "Curve Presets", "Edit Trigger" };
 
         juce::StringArray order;
         for (int i = 0; i < expected.size() + 5; ++i)
@@ -505,7 +504,7 @@ int main (int argc, char* argv[])
             press (window, key (juce::KeyPress::tabKey));
             order.add (describe (focused()));
 
-            if (focused() == triggerMode)
+            if (focused() == editTrigger)
                 break;
         }
         check (order == expected, "Tab runs through all " + juce::String (expected.size()) + " stops in every section and wraps");
@@ -516,30 +515,33 @@ int main (int argc, char* argv[])
         check (titleOf (focused()) == "Curve Presets", "Shift+Tab from the first control wraps to the last (" + describe (focused()) + ")");
 
         // Comma and period move from the section holding the focus, wherever Tab or a click left it.
+        // In the curve editor they move between points instead.
         triggerMode->grabKeyboardFocus();
         settle();
         press (window, character ('.'));
-        check (focused() == solo, "period from Timing: Sidechain (" + describe (focused()) + ")");
+        check (titleOf (focused()) == "Ramp Down", "period from Trigger: Ramp (" + describe (focused()) + ")");
         press (window, character ('.'));
-        check (titleOf (focused()) == "Band", "period again: Output (" + describe (focused()) + ")");
+        check (focused() == ringmod, "period again: Sidechain Effects (" + describe (focused()) + ")");
         press (window, character ('.'));
-        check (focused() == mainCurve, "period again: the curve editor (" + describe (focused()) + ")");
+        check (titleOf (focused()) == "Band Cutoff", "period again: Output (" + describe (focused()) + ")");
         press (window, character ('.'));
-        check (focused() == triggerMode, "period again wraps to Timing, skipping the hidden high curve (" + describe (focused()) + ")");
+        check (focused() == curveEditor, "period again: the curve editor (" + describe (focused()) + ")");
+        triggerMode->grabKeyboardFocus();
+        settle();
         press (window, character (','));
-        check (focused() == mainCurve, "comma from Timing wraps back to the curve editor");
+        check (focused() == curveEditor, "comma from Trigger wraps back to the curve editor, skipping the hidden high curve");
 
         ringmod->grabKeyboardFocus();
         settle();
         press (window, character ('.'));
-        check (titleOf (focused()) == "Band", "after a click on Ringmod Sidechain, period goes on to Output (" + describe (focused()) + ")");
+        check (titleOf (focused()) == "Band Cutoff", "after a click on Ringmod Sidechain, period goes on to Output (" + describe (focused()) + ")");
 
-        findTitled (*editor, "Detector Release")->grabKeyboardFocus();
+        highCurve->grabKeyboardFocus();
         settle();
         press (window, key (juce::KeyPress::tabKey));
-        check (titleOf (focused()) == "Band", "Tab from Sidechain's last stop goes on to Output (" + describe (focused()) + ")");
+        check (titleOf (focused()) == "Ramp Down", "Tab from Trigger's last stop goes on to Ramp (" + describe (focused()) + ")");
         press (window, character (','));
-        check (focused() == solo, "and comma from there goes back to Sidechain (" + describe (focused()) + ")");
+        check (focused() == editTrigger, "and comma from there goes back to Trigger (" + describe (focused()) + ")");
 
         // Return opens the value box; typing a value and Return sets the slider and goes back to it.
         auto* speedBox = [&]() -> juce::TextEditor*
@@ -596,11 +598,16 @@ int main (int argc, char* argv[])
         settle (100);
         check (valueOf (triggerMode) == "Grid", "Up arrow: back to Grid");
 
-        firstPoint->grabKeyboardFocus();
+        // The curve editor's keys; what each says is checked from the probe's notifications below.
+        curveEditor->grabKeyboardFocus();
         settle();
         press (window, key (juce::KeyPress::upKey));
-        check (valueOf (firstPoint) == "1%" && std::abs (state.getRawParameterValue ("curvePoint00")->load() - 0.01f) < 1.0e-4f,
-               "Up arrow on point 1: " + valueOf (firstPoint));
+        check (processor.getCurve (mainCurveSlot).getPoints().front().value == 50, "Up arrow in the curve editor raises the point at 0% to 5%");
+        press (window, key (juce::KeyPress::rightKey));
+        press (window, character ('a'));
+        check (processor.getCurve (mainCurveSlot).getPoints().size() == 3, "Right arrow and A add a point at 5%");
+        press (window, key (juce::KeyPress::backspaceKey));
+        check (processor.getCurve (mainCurveSlot) == Curve::makeDefault(), "Backspace clears the curve");
 
         // As in Atlas: Home goes to the top, End to the bottom, Page Up and Page Down move ten steps
         // from the step's grid.
@@ -625,7 +632,7 @@ int main (int argc, char* argv[])
         typeInto (window, speed, "1");
 
         values = homeEndPage (threshold, 1);
-        check (values == "0.0 dB, 0.0 dB, -40.0 dB, -30.0 dB", "Sidechain Threshold: " + values);
+        check (values == "0.0 dB, 0.0 dB, -40.0 dB, -30.0 dB", "Threshold: " + values);
         threshold->grabKeyboardFocus();
         settle();
         press (window, key (juce::KeyPress::pageDownKey));
@@ -641,9 +648,6 @@ int main (int argc, char* argv[])
         values = homeEndPage (cutoff, 1);
         check (values == "20 kHz, 20 kHz, 20 Hz, 1 kHz", "Band Cutoff: " + values);
         typeInto (window, cutoff, "300");
-
-        values = homeEndPage (firstPoint, 2);
-        check (values == "100%, 100%, 0%, 20%", "curve point 1: " + values);
 
         check (valueOf (speed) == "1.00x" && valueOf (threshold) == "-26.0 dB" && valueOf (release) == "50 ms" && valueOf (cutoff) == "300 Hz",
                "typed values set them back: " + valueOf (speed) + ", " + valueOf (threshold) + ", " + valueOf (release) + ", " + valueOf (cutoff));
@@ -699,16 +703,15 @@ int main (int argc, char* argv[])
         settle();
         press (window, key (juce::KeyPress::returnKey));
         settle (100);
-        check (isInAccessibilityTree (window, "High Curve Editor") && isInAccessibilityTree (window, "High Depth"),
-               "High Curve shows the High Curve Editor and High Depth");
+        check (isInAccessibilityTree (window, "Trigger 1 High Curve") && isInAccessibilityTree (window, "High Depth"),
+               "High Curve shows the high curve and High Depth");
 
-        press (window, character ('.'));
-        press (window, character ('.'));
-        auto* highCurveEditor = findTitled (*editor, "High Curve Editor");
-        check (highCurveEditor != nullptr && focused() == highCurveEditor,
-               "period twice from High Curve reaches the High Curve Editor (" + titleOf (focused()) + ")");
-        press (window, character ('.'));
-        check (focused() == triggerMode, "and period from there wraps to Timing");
+        triggerMode->grabKeyboardFocus();
+        settle();
+        press (window, character (','));
+        auto* highCurveSection = findTitled (*editor, "Trigger 1 High Curve");
+        check (highCurveSection != nullptr && focused() == highCurveSection->getChildComponent (0),
+               "comma from Trigger now wraps to the high curve's editor (" + titleOf (focused()) + ")");
     }
 
     std::cout << "\nCurve presets:" << std::endl;
@@ -749,8 +752,11 @@ int main (int argc, char* argv[])
         settle (300);
         testPreset.deleteFile();
 
-        check (menuOpened && valueOf (firstPoint) == "50%" && valueOf (findTitled (*mainCurve, "Main / Low Curve Editor point 16")) == "50%",
-               "choosing a saved curve loads it (point 1 now " + valueOf (firstPoint) + ")");
+        const auto loadedCurve = processor.getCurve (mainCurveSlot);
+        const auto& loadedPoints = loadedCurve.getPoints();
+        check (menuOpened && loadedPoints.size() == 16
+                   && std::all_of (loadedPoints.begin(), loadedPoints.end(), [] (const CurvePoint& point) { return point.value == 500; }),
+               "choosing a curve saved with 16 points loads them (" + juce::String ((int) loadedPoints.size()) + " points)");
         check (focused() == presets && hasScreenReaderFocus (presets), "and the screen reader is back on Curve Presets");
     }
 
@@ -764,20 +770,19 @@ int main (int argc, char* argv[])
                 check (false, line);
 
         const auto tree = [&probe] (const juce::String& type, const juce::String& name) { return probe.element (type, name); };
-        check (tree ("grouping", "Timing").size() > 0 && tree ("grouping", "Sidechain").size() > 0
-                   && tree ("grouping", "Output").size() > 0 && tree ("grouping", "Main / Low Curve Editor").size() > 0,
-               "groupings: Timing, Sidechain, Output, Main / Low Curve Editor");
+        check (tree ("grouping", "Trigger").size() > 0 && tree ("grouping", "Ramp").size() > 0 && tree ("grouping", "Sidechain Effects").size() > 0
+                   && tree ("grouping", "Output").size() > 0 && tree ("grouping", "Trigger 1 Curve").size() > 0,
+               "groupings: Trigger, Ramp, Sidechain Effects, Output, Trigger 1 Curve");
         check (tree ("combo box", "Trigger Mode")[4] == "Grid" && tree ("combo box", "Grid Division")[4] == "1/4",
                "combo boxes: Trigger Mode \"" + tree ("combo box", "Trigger Mode")[4] + "\", Grid Division \"" + tree ("combo box", "Grid Division")[4] + "\"");
-        check (tree ("slider", "Speed")[4] == "1.00x" && tree ("slider", "Sidechain Threshold")[4] == "-26.0 dB"
-                   && tree ("slider", "Detector Release")[4] == "50 ms" && tree ("slider", "Band Cutoff")[4] == "300 Hz"
-                   && tree ("slider", "Main / Low Curve Editor point 16")[4] == "100%",
-               "sliders give their text: Speed \"" + tree ("slider", "Speed")[4] + "\", Threshold \"" + tree ("slider", "Sidechain Threshold")[4] + "\"");
+        check (tree ("slider", "Speed")[4] == "1.00x" && tree ("slider", "Threshold")[4] == "-26.0 dB"
+                   && tree ("slider", "Detector Release")[4] == "50.5 ms" && tree ("slider", "Band Cutoff")[4] == "300 Hz",
+               "sliders give their text: Speed \"" + tree ("slider", "Speed")[4] + "\", Threshold \"" + tree ("slider", "Threshold")[4] + "\"");
         check (tree ("check box", "Sidechain Solo")[5] == "not checked" && tree ("check box", "Band")[5] == "not checked",
                "check boxes: Sidechain Solo " + tree ("check box", "Sidechain Solo")[5]);
         check (tree ("button", "Curve Presets").size() > 0, "button: Curve Presets");
 
-        check (probe.indexOf ("FOCUS", "check box", "Sidechain Solo") >= 0 && probe.indexOf ("FOCUS", "grouping", "Main / Low Curve Editor") >= 0
+        check (probe.indexOf ("FOCUS", "check box", "Sidechain Solo") >= 0 && probe.indexOf ("FOCUS", "grouping", "Trigger 1 Curve") >= 0
                    && probe.indexOf ("FOCUS", "combo box", "Trigger Mode") >= 0,
                "every move raised a focus change");
 
@@ -786,7 +791,7 @@ int main (int argc, char* argv[])
             notifications.add (fields[3] + " (processing " + fields[2] + ")");
         std::cout << "  notifications: " << notifications.joinIntoString ("; ") << std::endl;
         auto sectionNames = false;
-        for (auto* section : { "Timing", "Sidechain", "Output", "Main / Low Curve Editor", "High Curve Editor" })
+        for (auto* section : { "Trigger", "Ramp", "Sidechain Effects", "Output", "Trigger 1 Curve", "Trigger 1 High Curve" })
             sectionNames = sectionNames || notifications.contains (juce::String (section) + " (processing 2)");
         check (! sectionNames, "the section keys speak nothing extra: the screen reader reads each group's name as the focus enters it");
 
@@ -795,8 +800,11 @@ int main (int argc, char* argv[])
             if (fields[1] == "RangeValue" && fields[3] == "Speed" && fields[4] == "4.000000")
                 ++speedTopReads;
         check (speedTopReads == 2, "Home at the top of Speed reads 4.00x again (" + juce::String (speedTopReads) + " times in all)");
-        check (notifications.contains ("Main / Low Curve Editor curve loaded (processing 0)"),
-               "loading a curve speaks \"Main / Low Curve Editor curve loaded\" through the screen reader");
+        check (notifications.contains ("value 5% (processing 0)") && notifications.contains ("Added point, 5%, point, value 5.2%, curve 50% (processing 0)")
+                   && notifications.contains ("Curve cleared, 5%, value 0.3% (processing 0)"),
+               "the curve editor speaks each key's result through the screen reader");
+        check (notifications.contains ("BP-Trigger UI test loaded (processing 0)"),
+               "loading a curve speaks \"BP-Trigger UI test loaded\" through the screen reader");
 
         const auto soloOn = probe.indexOf ("PROPERTY", "ToggleState", "checked");
         check (soloOn >= 0 && probe.lines[soloOn].contains ("Sidechain Solo")
@@ -806,7 +814,7 @@ int main (int argc, char* argv[])
         check (probe.indexOf ("PROPERTY", "Value", "Sidechain") >= 0, "Trigger Mode's new value is sent (Sidechain)");
         check (probe.indexOf ("PROPERTY", "RangeValue", "Speed") >= 0, "Speed's changes are sent");
 
-        const auto loaded = probe.indexOf ("NOTIFICATION", "BP-Trigger", "Main / Low Curve Editor curve loaded");
+        const auto loaded = probe.indexOf ("NOTIFICATION", "BP-Trigger", "BP-Trigger UI test loaded");
         auto focusBack = 0;
         for (int i = probe.indexOf ("FOCUS", "check box", "High Curve"); i >= 0 && i < probe.lines.size(); ++i)
             if (probe.lines[i].startsWith ("FOCUS\tbutton\tCurve Presets"))
