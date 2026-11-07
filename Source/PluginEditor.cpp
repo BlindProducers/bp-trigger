@@ -122,13 +122,17 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     ringmodEnabledButton.setTitle ("Ringmod Sidechain");
     ringmodEnabledButton.setExplicitFocusOrder (7);
 
+    ringmodDuckedButton.setWantsKeyboardFocus (true);
+    ringmodDuckedButton.setTitle ("Duck Ringmod");
+    ringmodDuckedButton.setExplicitFocusOrder (8);
+
     configureSlider (speedSlider, speedLabel, "Speed", 3);
     configureSlider (rampDownSlider, rampDownLabel, "Ramp Down", 4);
     configureSlider (rampShapeSlider, rampShapeLabel, "Ramp Shape", 5);
-    configureSlider (preduckSlider, preduckLabel, "Pre-duck", 9);
-    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", 10);
-    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", 11);
-    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", 8);
+    configureSlider (preduckSlider, preduckLabel, "Pre-duck", 10);
+    configureSlider (thresholdSlider, thresholdLabel, "Sidechain Threshold", 11);
+    configureSlider (sensitivitySlider, sensitivityLabel, "Detector Release", 12);
+    configureSlider (ringmodIntensitySlider, ringmodIntensityLabel, "Ringmod Intensity", 9);
     bandEnabledButton.setWantsKeyboardFocus (true);
     bandEnabledButton.setTitle ("Band");
     bandEnabledButton.setExplicitFocusOrder (13);
@@ -150,6 +154,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
     divisionAttachment = std::make_unique<ComboBoxAttachment> (parameters, "division", divisionBox);
     sidechainSoloAttachment = std::make_unique<ButtonAttachment> (parameters, "sidechainSolo", sidechainSoloButton);
     ringmodEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "ringmodEnabled", ringmodEnabledButton);
+    ringmodDuckedAttachment = std::make_unique<ButtonAttachment> (parameters, "ringmodDucked", ringmodDuckedButton);
     bandEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "bandEnabled", bandEnabledButton);
     highCurveEnabledAttachment = std::make_unique<ButtonAttachment> (parameters, "highCurveEnabled", highCurveEnabledButton);
     speedAttachment = std::make_unique<SliderAttachment> (parameters, "speed", speedSlider);
@@ -178,6 +183,7 @@ SidechainerAudioProcessorEditor::SidechainerAudioProcessorEditor (SidechainerAud
 
     for (auto* child : { static_cast<juce::Component*> (&sidechainSoloButton),
                          static_cast<juce::Component*> (&ringmodEnabledButton),
+                         static_cast<juce::Component*> (&ringmodDuckedButton),
                          static_cast<juce::Component*> (&ringmodIntensitySlider),
                          static_cast<juce::Component*> (&ringmodIntensityLabel),
                          static_cast<juce::Component*> (&preduckSlider), static_cast<juce::Component*> (&preduckLabel),
@@ -275,6 +281,8 @@ void SidechainerAudioProcessorEditor::resized()
     sidechainSoloButton.setBounds (sidechainArea.removeFromTop (26).withTrimmedLeft (112));
     sidechainArea.removeFromTop (8);
     ringmodEnabledButton.setBounds (sidechainArea.removeFromTop (26).withTrimmedLeft (112));
+    sidechainArea.removeFromTop (8);
+    ringmodDuckedButton.setBounds (sidechainArea.removeFromTop (26).withTrimmedLeft (112));
     sidechainArea.removeFromTop (8);
     layoutSlider (ringmodIntensitySlider, sidechainArea);
     layoutSlider (preduckSlider, sidechainArea);

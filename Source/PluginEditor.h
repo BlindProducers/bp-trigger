@@ -58,6 +58,7 @@ private:
     AccessibleComboBox divisionBox;
     AccessibleToggleButton sidechainSoloButton { "Sidechain Solo" };
     AccessibleToggleButton ringmodEnabledButton { "Ringmod Sidechain" };
+    AccessibleToggleButton ringmodDuckedButton { "Duck Ringmod" };
     AccessibleToggleButton bandEnabledButton { "Band" };
     AccessibleToggleButton highCurveEnabledButton { "High Curve" };
     // Normal and fine steps, in the unit each value is shown in; percentages step in fractions (0.01 is 1%).
@@ -81,6 +82,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> divisionAttachment;
     std::unique_ptr<ButtonAttachment> sidechainSoloAttachment;
     std::unique_ptr<ButtonAttachment> ringmodEnabledAttachment;
+    std::unique_ptr<ButtonAttachment> ringmodDuckedAttachment;
     std::unique_ptr<ButtonAttachment> bandEnabledAttachment;
     std::unique_ptr<ButtonAttachment> highCurveEnabledAttachment;
     std::unique_ptr<SliderAttachment> speedAttachment;

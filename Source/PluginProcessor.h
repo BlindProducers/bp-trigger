@@ -80,6 +80,7 @@ private:
     std::atomic<float>* sidechainSoloParam = nullptr;
     std::atomic<float>* ringmodEnabledParam = nullptr;
     std::atomic<float>* ringmodIntensityParam = nullptr;
+    std::atomic<float>* ringmodDuckedParam = nullptr;
     std::atomic<float>* bandEnabledParam = nullptr;
     std::atomic<float>* highCurveEnabledParam = nullptr;
     std::atomic<float>* bandCutoffParam = nullptr;
@@ -102,6 +103,7 @@ private:
     float smoothedGain = 1.0f;
     float smoothedHighGain = 1.0f;
     std::array<float, 2> smoothedRingmodDepth {};
+    float smoothedRingmodDucked = 1.0f;
     float clockedProcessingBlend = 0.0f;
     bool sidechainTriggerArmed = true;
 
@@ -120,6 +122,7 @@ private:
     int cachedDivision = 3;
     bool cachedSidechainSolo = false;
     bool cachedRingmodEnabled = false;
+    bool cachedRingmodDucked = true;
     bool cachedBandEnabled = false;
     bool cachedHighCurveEnabled = false;
 

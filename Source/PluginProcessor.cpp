@@ -214,6 +214,7 @@ SidechainerAudioProcessor::SidechainerAudioProcessor()
     sidechainSoloParam = parameters.getRawParameterValue ("sidechainSolo");
     ringmodEnabledParam = parameters.getRawParameterValue ("ringmodEnabled");
     ringmodIntensityParam = parameters.getRawParameterValue ("ringmodIntensity");
+    ringmodDuckedParam = parameters.getRawParameterValue ("ringmodDucked");
     bandEnabledParam = parameters.getRawParameterValue ("bandEnabled");
     highCurveEnabledParam = parameters.getRawParameterValue ("highCurveEnabled");
     bandCutoffParam = parameters.getRawParameterValue ("bandCutoff");
@@ -225,7 +226,7 @@ SidechainerAudioProcessor::SidechainerAudioProcessor()
         highCurvePoints[(size_t) i] = parameters.getRawParameterValue (highCurvePointId (i));
 
     for (auto id : { "triggerMode", "division", "speed", "preduck", "rampDown", "rampShape", "threshold", "sensitivity",
-                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "bandEnabled", "highCurveEnabled",
+                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "ringmodDucked", "bandEnabled", "highCurveEnabled",
                      "bandCutoff", "depth", "highDepth", "mix" })
         parameters.addParameterListener (id, this);
 
@@ -235,7 +236,7 @@ SidechainerAudioProcessor::SidechainerAudioProcessor()
 SidechainerAudioProcessor::~SidechainerAudioProcessor()
 {
     for (auto id : { "triggerMode", "division", "speed", "preduck", "rampDown", "rampShape", "threshold", "sensitivity",
-                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "bandEnabled", "highCurveEnabled",
+                     "sidechainSolo", "ringmodEnabled", "ringmodIntensity", "ringmodDucked", "bandEnabled", "highCurveEnabled",
                      "bandCutoff", "depth", "highDepth", "mix" })
         parameters.removeParameterListener (id, this);
 }
@@ -266,6 +267,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SidechainerAudioProcessor::c
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "ringmodEnabled", 1 }, "Ringmod Sidechain", false));
     params.push_back (makePercentParam ("ringmodIntensity", "Ringmod Intensity", 0.0f, 1.0f, 1.0f));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "ringmodDucked", 1 }, "Duck Ringmod", true));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bandEnabled", 1 }, "Band", false));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
@@ -331,6 +334,7 @@ void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     bandLowpassState.fill (0.0f);
     freeRunningGridPhase = 0.0;
     refreshParameterCache();
+    smoothedRingmodDucked = cachedRingmodDucked ? 1.0f : 0.0f;
     updateLatencyForPreduck();
 }
 
@@ -526,6 +530,8 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         // where it sits in the host's timeline, not Pre-duck plus Ramp Down earlier.
         const auto ringmodLeft = sidechainDelay.getSample (0, readPos);
         const auto ringmodRight = sidechainSources == 1 ? ringmodLeft : sidechainDelay.getSample (1, readPos);
+        const auto targetRingmodDucked = cachedRingmodDucked ? 1.0f : 0.0f;
+        smoothedRingmodDucked = targetRingmodDucked + ringmodSmoothingCoeff * (smoothedRingmodDucked - targetRingmodDucked);
 
         for (int ch = 0; ch < totalOutputChannels; ++ch)
         {
@@ -546,8 +552,8 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 const auto targetRingDepth = cachedRingmodEnabled ? cachedRingmodIntensity : 0.0f;
                 auto& ringDepth = smoothedRingmodDepth[(size_t) sourceChannel];
                 ringDepth = targetRingDepth + ringmodSmoothingCoeff * (ringDepth - targetRingDepth);
-                const auto ringmodDelta = dry * -std::abs (ringSidechain) * ringmodFullScaleDrive;
-                const auto shapedInput = dry + ringDepth * ringmodDelta;
+                const auto ringAmount = ringDepth * std::abs (ringSidechain) * ringmodFullScaleDrive;
+                const auto shapedInput = dry * (1.0f - smoothedRingmodDucked * ringAmount);
                 auto wet = shapedInput * smoothedGain;
 
                 if (cachedBandEnabled)
@@ -563,6 +569,10 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 {
                     bandLowpassState[(size_t) sourceChannel] = shapedInput;
                 }
+
+                // With Duck Ringmod off, the ringmod is added after the duck, so it plays through it.
+                // Capping its amount at 1 + gain keeps the output within the dry level.
+                wet -= (1.0f - smoothedRingmodDucked) * dry * std::min (ringAmount, 1.0f + smoothedGain);
 
                 buffer.setSample (ch, sample, dry + cachedMix * clockedProcessingBlend * (wet - dry));
             }
@@ -676,6 +686,7 @@ void SidechainerAudioProcessor::refreshParameterCache()
     cachedSidechainSolo = sidechainSoloParam->load() >= 0.5f;
     cachedRingmodEnabled = ringmodEnabledParam->load() >= 0.5f;
     cachedRingmodIntensity = ringmodIntensityParam->load();
+    cachedRingmodDucked = ringmodDuckedParam->load() >= 0.5f;
     cachedBandEnabled = bandEnabledParam->load() >= 0.5f;
     cachedHighCurveEnabled = highCurveEnabledParam->load() >= 0.5f;
     cachedBandCutoffHz = bandCutoffParam->load();

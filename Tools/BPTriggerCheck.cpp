@@ -354,6 +354,19 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     host.set ("Ringmod Intensity", "50");
     output = host.run (0.5, constant (0.5f), constant (0.04f));
     check (std::abs (output[(size_t) (0.4 * rate)] - 0.5f * (1.0f - 0.04f)) < 0.001f, "Ringmod Intensity 50% does half as much");
+
+    // A sidechain of 0.3 triggers the curve; 0.1 s in, the gain is ducked to g. Ducked, the output is
+    // 0.5 g (1 - 0.6); with Duck Ringmod off the ringmod passes the duck, so it is 0.5 (g - 0.6).
+    host.set ("Ringmod Intensity", "100");
+    host.reset();
+    const auto ducked = host.run (0.2, constant (0.5f), constant (0.3f))[(size_t) (0.1 * rate)];
+    const auto duckedGain = ducked / (0.5f * 0.4f);
+    host.set ("Duck Ringmod", "0");
+    host.reset();
+    const auto unducked = host.run (0.2, constant (0.5f), constant (0.3f))[(size_t) (0.1 * rate)];
+    check (duckedGain < 0.9f && std::abs (unducked - 0.5f * (duckedGain - 0.6f)) < 0.001f,
+           "with Duck Ringmod off, the ringmod plays through the duck (gain " + juce::String (duckedGain, 3) + ")");
+    host.set ("Duck Ringmod", "1");
     host.set ("Ringmod Sidechain", "0");
 }
 
@@ -418,12 +431,12 @@ void checkHostView (juce::AudioPluginFormat& format, const juce::PluginDescripti
 
     auto allThere = true;
     for (auto name : { "Depth", "High Depth", "Mix", "Trigger Mode", "Grid Division", "Speed", "Pre-duck", "Ramp Down", "Ramp Shape",
-                       "Sidechain Threshold", "Detector Release", "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Band",
+                       "Sidechain Threshold", "Detector Release", "Sidechain Solo", "Ringmod Sidechain", "Ringmod Intensity", "Duck Ringmod", "Band",
                        "High Curve", "Band Cutoff" })
         allThere = allThere && names.contains (name);
     for (int i = 1; i <= 16; ++i)
         allThere = allThere && names.contains ("Curve Point " + juce::String (i)) && names.contains ("High Curve Point " + juce::String (i));
-    check (allThere, "all 17 controls and both sets of 16 curve points are automatable (" + juce::String (names.size()) + " parameters)");
+    check (allThere, "all 18 controls and both sets of 16 curve points are automatable (" + juce::String (names.size()) + " parameters)");
 
     const auto text = [&host] (const juce::String& name)
     {

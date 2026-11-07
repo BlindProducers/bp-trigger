@@ -24,7 +24,7 @@ Detector Release controls how quickly the detector resets after a hit. Its range
 
 ### Ring modulation
 
-Ringmod Sidechain uses the incoming sidechain signal to modulate the shaped audio. Ringmod Intensity sets how strongly it is applied. This is independent of the trigger mode, so it can be used as a texture tool as well as part of a sidechain setup.
+Ringmod Sidechain uses the incoming sidechain signal to modulate the main audio, in time with the sidechain. Ringmod Intensity sets how strongly it is applied. With Duck Ringmod on, the duck turns the ringmod down with the rest of the audio; turn it off to hear the ringmod through the duck. This is independent of the trigger mode, so it can be used as a texture tool as well as part of a sidechain setup.
 
 ### Band mode
 
