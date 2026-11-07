@@ -16,7 +16,7 @@ The Speed control changes the rate at which the curve is read. Ramp Down and Ram
 
 ## Listening to the sidechain
 
-Turn on Sidechain Solo when setting the threshold. It mutes the normal output and plays only the sidechain signal that reaches the detector threshold, so you can hear what is actually being picked up.
+Turn on Sidechain Solo when setting the threshold. It mutes the normal output and plays only the sidechain signal that reaches the detector threshold, fading out at the Detector Release time, so you can hear what is actually being picked up.
 
 Detector Release controls how quickly the detector resets after a hit. Its range is 1 to 100 ms. Faster settings are useful for short, closely spaced transients; longer settings keep the detector open for longer material.
 

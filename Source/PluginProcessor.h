@@ -99,7 +99,7 @@ private:
     double samplesSinceLastSidechainTrigger = 0.0;
     float sidechainEnvelopePhase = 1.0f;
     float detectorEnvelope = 0.0f;
-    float previousDetectorEnvelope = 0.0f;
+    float soloGateGain = 0.0f;
     float smoothedGain = 1.0f;
     float smoothedHighGain = 1.0f;
     std::array<float, 2> smoothedRingmodDepth {};

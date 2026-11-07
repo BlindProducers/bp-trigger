@@ -336,7 +336,7 @@ void checkSidechainModes (juce::AudioPluginFormat& format, const juce::PluginDes
     };
     output = host.run (0.5, constant (0.5f), sine (0.3f));
     auto largest = 0.0f;
-    for (size_t i = 48; i < output.size(); ++i)
+    for (auto i = static_cast<size_t> (0.02 * rate); i < output.size(); ++i)   // after the solo's 1 ms fade-in
         largest = juce::jmax (largest, std::abs (output[i] - sine (0.3f) (static_cast<juce::int64> (i))));
     check (largest < 1.0e-6f, "a sidechain above the threshold is heard instead of the input");
 

@@ -7,6 +7,7 @@ constexpr auto stateId = "BPTriggerState";
 constexpr auto maxPreduckMs = 10.0f;
 constexpr auto maxRampDownMs = 10.0f;
 constexpr auto gainSmoothingMs = 1.5f;
+constexpr auto soloGateAttackMs = 1.0f;
 constexpr auto transportSmoothingMs = 10.0f;
 constexpr auto minimumRingmodSmoothingMs = 1.0f;
 constexpr auto maximumRingmodSmoothingMs = 10.0f;
@@ -325,7 +326,7 @@ void SidechainerAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     sidechainEnvelopeElapsedSamples = 1.0e12;
     samplesSinceLastSidechainTrigger = sampleRate;
     detectorEnvelope = 0.0f;
-    previousDetectorEnvelope = 0.0f;
+    soloGateGain = 0.0f;
     smoothedGain = 1.0f;
     smoothedHighGain = 1.0f;
     smoothedRingmodDepth = {};
@@ -374,6 +375,8 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                        juce::jmax (cachedRampDownMs, cachedPreduckMs))
                                         : minimumRingmodSmoothingMs;
     const auto ringmodSmoothingCoeff = std::exp (-1.0f / static_cast<float> (0.001 * ringmodSmoothingMs * currentSampleRate));
+    const auto releaseCoeff = std::exp (-1.0f / static_cast<float> (0.001 * detectorReleaseMsFromSensitivity (cachedSensitivity) * currentSampleRate));
+    const auto soloGateAttackCoeff = std::exp (-1.0f / static_cast<float> (0.001 * soloGateAttackMs * currentSampleRate));
     const auto transportBlendStep = 1.0f / static_cast<float> (juce::jmax (1, juce::roundToInt (currentSampleRate * transportSmoothingMs / 1000.0)));
     const auto bandCoeff = 1.0f - std::exp (-juce::MathConstants<float>::twoPi
                                             * juce::jlimit (minimumBandCutoffHz,
@@ -446,12 +449,15 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         const auto sidechainMonitorRight = sidechainSources == 1 ? sidechainMonitorLeft
                                                                  : sidechainDelay.getSample (1, sidechainReadPos);
 
-        const auto releaseMs = detectorReleaseMsFromSensitivity (cachedSensitivity);
-        const auto releaseCoeff = std::exp (-1.0f / static_cast<float> (0.001 * releaseMs * currentSampleRate));
         detectorEnvelope = sidechainLevel > detectorEnvelope
                                ? sidechainLevel
                                : releaseCoeff * detectorEnvelope + (1.0f - releaseCoeff) * sidechainLevel;
-        const auto thresholdedSidechainMonitor = detectorEnvelope >= cachedThreshold;
+
+        // Sidechain Solo plays the sidechain while the detector is over the threshold. It fades in over
+        // a millisecond and out at the Detector Release time, so its edges do not click.
+        const auto soloGateTarget = detectorEnvelope >= cachedThreshold ? 1.0f : 0.0f;
+        const auto soloGateCoeff = soloGateTarget > soloGateGain ? soloGateAttackCoeff : releaseCoeff;
+        soloGateGain = soloGateTarget + soloGateCoeff * (soloGateGain - soloGateTarget);
 
         if (bypassClockedProcessing)
         {
@@ -478,7 +484,6 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             }
         }
 
-        previousDetectorEnvelope = detectorEnvelope;
         samplesSinceLastSidechainTrigger += 1.0;
 
         float phase = 1.0f;
@@ -537,11 +542,9 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         {
             if (cachedSidechainSolo)
             {
-                const auto monitor = thresholdedSidechainMonitor
-                                         ? (totalOutputChannels == 1 ? 0.5f * (sidechainMonitorLeft + sidechainMonitorRight)
-                                                                     : (ch == 0 ? sidechainMonitorLeft : sidechainMonitorRight))
-                                         : 0.0f;
-                buffer.setSample (ch, sample, monitor);
+                const auto monitor = totalOutputChannels == 1 ? 0.5f * (sidechainMonitorLeft + sidechainMonitorRight)
+                                                              : (ch == 0 ? sidechainMonitorLeft : sidechainMonitorRight);
+                buffer.setSample (ch, sample, soloGateGain * monitor);
             }
             else
             {
