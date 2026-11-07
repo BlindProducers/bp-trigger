@@ -11,7 +11,6 @@ constexpr auto transportSmoothingMs = 10.0f;
 constexpr auto minimumRingmodSmoothingMs = 1.0f;
 constexpr auto maximumRingmodSmoothingMs = 10.0f;
 constexpr auto ringmodFullScaleDrive = 2.0f;
-constexpr auto minimumRingmodTriggerFadeMs = 0.5f;
 constexpr auto minimumThresholdDb = -40.0f;
 constexpr auto minimumDetectorReleaseMs = 1.0f;
 constexpr auto maximumDetectorReleaseMs = 100.0f;
@@ -507,19 +506,6 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         const auto targetHighGain = ! bypassClockedProcessing && cachedBandEnabled && cachedHighCurveEnabled
                                         ? getGainForPhase (phase, highCurve, cachedHighDepth)
                                         : 1.0f;
-        auto ringmodTriggerFade = 1.0f;
-        if (cachedRingmodEnabled && mode != TriggerMode::grid && sidechainEnvelopeElapsedSamples < 1.0e11)
-        {
-            const auto fadeMs = juce::jmax (minimumRingmodTriggerFadeMs, juce::jmax (cachedRampDownMs, cachedPreduckMs));
-            const auto fadeSamples = juce::jmax (1.0, static_cast<double> (fadeMs) * currentSampleRate / 1000.0);
-
-            if (sidechainEnvelopeElapsedSamples < fadeSamples)
-            {
-                const auto progress = juce::jlimit (0.0f, 1.0f,
-                                                    static_cast<float> (sidechainEnvelopeElapsedSamples / fadeSamples));
-                ringmodTriggerFade = std::pow (progress, juce::jlimit (0.25f, 4.0f, cachedRampShape));
-            }
-        }
         const auto envelopeSmoothingCoeff = bypassClockedProcessing ? transportSmoothingCoeff : gainSmoothingCoeff;
         smoothedGain = targetGain + envelopeSmoothingCoeff * (smoothedGain - targetGain);
         smoothedHighGain = targetHighGain + envelopeSmoothingCoeff * (smoothedHighGain - targetHighGain);
@@ -536,6 +522,11 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
         const auto readPos = (delayWritePosition + delaySize - mainDelaySamples) % delaySize;
 
+        // The ringmod reads the sidechain with the main audio's delay, so a hit modulates the main audio
+        // where it sits in the host's timeline, not Pre-duck plus Ramp Down earlier.
+        const auto ringmodLeft = sidechainDelay.getSample (0, readPos);
+        const auto ringmodRight = sidechainSources == 1 ? ringmodLeft : sidechainDelay.getSample (1, readPos);
+
         for (int ch = 0; ch < totalOutputChannels; ++ch)
         {
             if (cachedSidechainSolo)
@@ -550,13 +541,13 @@ void SidechainerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             {
                 const auto sourceChannel = juce::jmin (ch, mainAudioChannels - 1);
                 const auto dry = mainDelay.getSample (sourceChannel, readPos);
-                const auto ringSidechain = totalOutputChannels == 1 ? 0.5f * (sidechainMonitorLeft + sidechainMonitorRight)
-                                                                    : (ch == 0 ? sidechainMonitorLeft : sidechainMonitorRight);
+                const auto ringSidechain = totalOutputChannels == 1 ? 0.5f * (ringmodLeft + ringmodRight)
+                                                                    : (ch == 0 ? ringmodLeft : ringmodRight);
                 const auto targetRingDepth = cachedRingmodEnabled ? cachedRingmodIntensity : 0.0f;
                 auto& ringDepth = smoothedRingmodDepth[(size_t) sourceChannel];
                 ringDepth = targetRingDepth + ringmodSmoothingCoeff * (ringDepth - targetRingDepth);
                 const auto ringmodDelta = dry * -std::abs (ringSidechain) * ringmodFullScaleDrive;
-                const auto shapedInput = dry + ringmodTriggerFade * ringDepth * ringmodDelta;
+                const auto shapedInput = dry + ringDepth * ringmodDelta;
                 auto wet = shapedInput * smoothedGain;
 
                 if (cachedBandEnabled)
